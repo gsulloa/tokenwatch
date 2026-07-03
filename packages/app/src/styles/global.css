@@ -1,0 +1,189 @@
+:root {
+  color-scheme: light dark;
+  --font-stack:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 999px;
+
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  --duration-instant: 80ms;
+  --duration-short: 120ms;
+  --duration-medium: 180ms;
+  --duration-long: 300ms;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-elevated: #f7f7f8;
+  --bg-sidebar: #f2f2f3;
+  --bg-statusbar: #ececee;
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --bg-active: rgba(0, 0, 0, 0.08);
+  --bg-overlay: rgba(0, 0, 0, 0.4);
+
+  --surface: #ffffff;
+  --surface-2: #f7f7f8;
+  --surface-3: #ededee;
+
+  --text: #1a1a1c;
+  --text-muted: #5b5b66;
+  --text-subtle: #888892;
+  --text-inverse: #ffffff;
+
+  --border: #e1e1e4;
+  --border-strong: #c7c7cc;
+
+  --canvas: #FAFAF9;
+  --elevated: #FFFFFF;
+  --hairline: rgba(0, 0, 0, 0.04);
+
+  --accent: #7C3AED;
+  --accent-hover: #6D28D9;
+  --accent-soft: rgba(124, 58, 237, 0.10);
+  --accent-glow: rgba(124, 58, 237, 0.16);
+  --accent-text: #ffffff;
+
+  --danger: #dc2626;
+  --warning: #d97706;
+  --success: #16a34a;
+  --success-soft: rgba(22, 163, 74, 0.12);
+  --info: #2563EB;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.18);
+
+  /* Connection color palette (light theme).
+     Semantic-mapped: violet=accent, blue=info, green=success, amber=warning, red=danger.
+     Tuned for contrast against --canvas #FAFAF9 (darker shades for legibility). */
+  --conn-color-violet: var(--accent);
+  --conn-color-blue: var(--info);
+  --conn-color-green: var(--success);
+  --conn-color-amber: var(--warning);
+  --conn-color-red: var(--danger);
+  --conn-color-teal: #0D9488;
+  --conn-color-pink: #DB2777;
+  --conn-color-gray: #6B7280;
+}
+
+:root[data-theme="dark"] {
+  --bg: #18181b;
+  --bg-elevated: #1f1f23;
+  --bg-sidebar: #16161a;
+  --bg-statusbar: #1c1c20;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  --bg-overlay: rgba(0, 0, 0, 0.55);
+
+  --surface: #1C1C24;
+  --surface-2: #23232C;
+  --surface-3: #2d2d33;
+
+  --canvas: #0B0B0F;
+  --elevated: #15151B;
+  --hairline: rgba(255, 255, 255, 0.04);
+
+  --text: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --text-subtle: #71717a;
+  --text-inverse: #09090b;
+
+  --border: #2e2e33;
+  --border-strong: #3f3f46;
+
+  --accent: #A855F7;
+  --accent-hover: #C084FC;
+  --accent-soft: rgba(168, 85, 247, 0.12);
+  --accent-glow: rgba(168, 85, 247, 0.18);
+  --accent-text: #ffffff;
+
+  --danger: #f87171;
+  --warning: #fbbf24;
+  --success: #34d399;
+  --success-soft: rgba(74, 222, 128, 0.12);
+  --info: #60A5FA;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.7);
+
+  /* Connection color palette (dark theme).
+     Semantic-mapped: violet=accent, blue=info, green=success, amber=warning, red=danger.
+     Brighter shades tuned for legibility against the dark canvas #0B0B0F. */
+  --conn-color-violet: var(--accent);
+  --conn-color-blue: var(--info);
+  --conn-color-green: var(--success);
+  --conn-color-amber: var(--warning);
+  --conn-color-red: var(--danger);
+  --conn-color-teal: #2DD4BF;
+  --conn-color-pink: #F472B6;
+  --conn-color-gray: #9CA3AF;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--font-stack);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+button:hover {
+  background: var(--bg-hover);
+}
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}

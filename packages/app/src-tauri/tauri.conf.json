@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TokenWatch",
+  "version": "0.1.0",
+  "identifier": "com.tokenwatch.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "TokenWatch",
+        "width": 420,
+        "height": 560,
+        "resizable": false,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
+    },
+    "macOSPrivateApi": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Monitor Claude / Codex token usage",
+    "longDescription": "TokenWatch is a macOS menu-bar app that monitors Claude and Codex token usage per project and workspace, with limit alerts."
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://releases.tokenwatch.app/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBKEY"
+    }
+  }
+}
