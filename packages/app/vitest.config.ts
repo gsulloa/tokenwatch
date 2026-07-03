@@ -10,6 +10,7 @@ export default defineConfig({
       "@/app": path.resolve(__dirname, "src/app"),
       "@/styles": path.resolve(__dirname, "src/styles"),
       "@/assets": path.resolve(__dirname, "src/assets"),
+      "@/features": path.resolve(__dirname, "src/features"),
     },
   },
   test: {
