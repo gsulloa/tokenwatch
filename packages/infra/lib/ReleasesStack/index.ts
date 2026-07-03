@@ -1,0 +1,218 @@
+import * as cdk from "aws-cdk-lib";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as iam from "aws-cdk-lib/aws-iam";
+import { ARecord, AaaaRecord, RecordTarget } from "aws-cdk-lib/aws-route53";
+import { CloudFrontTarget } from "aws-cdk-lib/aws-route53-targets";
+import * as ssm from "aws-cdk-lib/aws-ssm";
+import { Construct } from "constructs";
+
+import {
+  LANDING_PUBLIC_URL,
+  LANDING_WWW_SUBDOMAIN,
+  PROJECT_NAME,
+  RELEASES_LOG_PREFIX,
+  RELEASES_SUBDOMAIN,
+} from "@/constants";
+import { AnalyticsStack } from "@/lib/AnalyticsStack/index";
+import { DnsStack } from "@/lib/DnsStack/index";
+
+export class ReleasesStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    // ── DNS / Certificate (from DnsStack via SSM) ────────────────────────────
+    const hostedZone = DnsStack.getHostedZone(this);
+    const certificate = DnsStack.getCertificate(this);
+
+    // ── Analytics log bucket (from AnalyticsStack via SSM) ───────────────────
+    const logBucket = AnalyticsStack.getLogBucket(this);
+
+    // ── S3 Bucket ─────────────────────────────────────────────────────────────
+    const bucket = new s3.Bucket(this, "ArtifactsBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
+    });
+
+    // ── CloudFront Distribution ────────────────────────────────────────────────
+    // Use the modern OAC helper — S3BucketOrigin.withOriginAccessControl
+    // automatically wires the bucket policy to grant s3:GetObject to the
+    // distribution only.
+    const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(bucket);
+
+    // ── CORS for the JSON manifests ────────────────────────────────────────────
+    // The landing page (tokenwatch.app) fetches download.json from this
+    // (releases.tokenwatch.app) origin to render its download CTA. That is a
+    // cross-origin request, so the manifest responses need CORS headers.
+    const manifestCorsPolicy = new cloudfront.ResponseHeadersPolicy(
+      this,
+      "ManifestCorsPolicy",
+      {
+        comment: "CORS for download.json / latest.json (landing page fetch)",
+        corsBehavior: {
+          accessControlAllowCredentials: false,
+          accessControlAllowHeaders: ["*"],
+          accessControlAllowMethods: ["GET", "HEAD"],
+          accessControlAllowOrigins: [
+            LANDING_PUBLIC_URL,
+            `https://${LANDING_WWW_SUBDOMAIN}`,
+          ],
+          originOverride: true,
+        },
+      }
+    );
+
+    const distribution = new cloudfront.Distribution(this, "Distribution", {
+      defaultBehavior: {
+        origin: s3Origin,
+        viewerProtocolPolicy:
+          cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        compress: true,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+      },
+      httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
+      domainNames: [RELEASES_SUBDOMAIN],
+      certificate,
+      enableLogging: true,
+      logBucket,
+      logFilePrefix: RELEASES_LOG_PREFIX,
+      // Additional no-cache behaviors for the two manifest files so updated
+      // manifests are visible immediately without waiting for TTL expiry.
+      additionalBehaviors: {
+        "latest.json": {
+          origin: s3Origin,
+          viewerProtocolPolicy:
+            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          responseHeadersPolicy: manifestCorsPolicy,
+        },
+        "download.json": {
+          origin: s3Origin,
+          viewerProtocolPolicy:
+            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          responseHeadersPolicy: manifestCorsPolicy,
+        },
+      },
+    });
+
+    // ── Route53 Alias Records ─────────────────────────────────────────────────
+    const recordTarget = RecordTarget.fromAlias(new CloudFrontTarget(distribution));
+    new ARecord(this, "ReleasesAliasA", {
+      zone: hostedZone,
+      recordName: RELEASES_SUBDOMAIN,
+      target: recordTarget,
+    });
+    new AaaaRecord(this, "ReleasesAliasAaaa", {
+      zone: hostedZone,
+      recordName: RELEASES_SUBDOMAIN,
+      target: recordTarget,
+    });
+
+    // ── GitHub OIDC Publish Role ───────────────────────────────────────────────
+    //
+    // The GitHub OIDC provider (`token.actions.githubusercontent.com`) may
+    // already exist in the AWS account — creating a second one would fail.
+    // Guard with a CDK context flag:
+    //   cdk deploy --context githubOidcProviderArn=arn:aws:iam::123:oidc-provider/...
+    // When provided, we look up the existing provider; otherwise we create one.
+    const existingProviderArn = this.node.tryGetContext(
+      "githubOidcProviderArn"
+    ) as string | undefined;
+
+    const oidcProvider = existingProviderArn
+      ? iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(
+          this,
+          "GithubOidcProvider",
+          existingProviderArn
+        )
+      : new iam.OpenIdConnectProvider(this, "GithubOidcProvider", {
+          url: "https://token.actions.githubusercontent.com",
+          clientIds: ["sts.amazonaws.com"],
+        });
+
+    const publishRole = new iam.Role(this, "PublishRole", {
+      assumedBy: new iam.WebIdentityPrincipal(oidcProvider.openIdConnectProviderArn, {
+        StringEquals: {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+        },
+        StringLike: {
+          // Scoped to tag pushes only — `release.yml` triggers on `v*` tags,
+          // which only maintainers with write access can push. A broad
+          // `repo:gsulloa/tokenwatch:*` would let any workflow run (any branch/PR/
+          // event) in this public repo assume the role.
+          "token.actions.githubusercontent.com:sub":
+            "repo:gsulloa/tokenwatch:ref:refs/tags/v*",
+        },
+      }),
+      description: "Assumed by GitHub Actions to publish TokenWatch release artifacts",
+    });
+
+    // Least-privilege inline policy — no delete, no wildcards.
+    publishRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: "S3Objects",
+        actions: ["s3:PutObject", "s3:GetObject"],
+        resources: [`${bucket.bucketArn}/*`],
+      })
+    );
+    publishRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: "S3List",
+        actions: ["s3:ListBucket"],
+        resources: [bucket.bucketArn],
+      })
+    );
+    publishRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: "CloudFrontInvalidation",
+        actions: ["cloudfront:CreateInvalidation"],
+        resources: [
+          `arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`,
+        ],
+      })
+    );
+
+    // ── Outputs ───────────────────────────────────────────────────────────────
+    const ssmPrefix = `/${PROJECT_NAME}/releases`;
+
+    new cdk.CfnOutput(this, "CloudFrontDomain", {
+      value: distribution.distributionDomainName,
+      description: "CloudFront distribution domain name",
+    });
+    new cdk.CfnOutput(this, "BucketName", {
+      value: bucket.bucketName,
+      description: "S3 artifact bucket name",
+    });
+    new cdk.CfnOutput(this, "DistributionId", {
+      value: distribution.distributionId,
+      description: "CloudFront distribution ID",
+    });
+    new cdk.CfnOutput(this, "PublishRoleArn", {
+      value: publishRole.roleArn,
+      description: "IAM role ARN for GitHub Actions OIDC publish",
+    });
+
+    new ssm.StringParameter(this, "SsmCloudfrontDomain", {
+      parameterName: `${ssmPrefix}/cloudfront-domain`,
+      stringValue: distribution.distributionDomainName,
+    });
+    new ssm.StringParameter(this, "SsmBucketName", {
+      parameterName: `${ssmPrefix}/bucket-name`,
+      stringValue: bucket.bucketName,
+    });
+    new ssm.StringParameter(this, "SsmDistributionId", {
+      parameterName: `${ssmPrefix}/distribution-id`,
+      stringValue: distribution.distributionId,
+    });
+    new ssm.StringParameter(this, "SsmPublishRoleArn", {
+      parameterName: `${ssmPrefix}/publish-role-arn`,
+      stringValue: publishRole.roleArn,
+    });
+  }
+}

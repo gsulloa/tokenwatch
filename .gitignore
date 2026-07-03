@@ -1,0 +1,34 @@
+node_modules
+packages/app/dist
+dist-ssr
+*.local
+.DS_Store
+
+# Build output
+packages/app/src-tauri/target
+
+# Local release
+.env.release
+staging/
+latest.json
+*.partial.json
+download.json
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+.envrc
+
+# CDK
+cdk.out
+packages/infra/cdk.out
+
+# Generated changelog copy (synced from root CHANGELOG.md at build time)
+packages/app/src/generated/

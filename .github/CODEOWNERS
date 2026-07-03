@@ -1,0 +1,4 @@
+# Code owners for TokenWatch.
+* @gsulloa
+/packages/infra/ @gsulloa
+/.github/ @gsulloa

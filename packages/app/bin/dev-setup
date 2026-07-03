@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Set up local development environment for Conductor workspaces and git worktrees.
+#
+# - Copies .envrc from the main worktree (so secrets carry over to new worktrees)
+# - Runs `direnv allow` if direnv is available
+#
+# Usage: bin/dev-setup
+set -u
+
+WORKSPACE="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Make sure common Homebrew install paths are visible — Conductor's non-interactive
+# shell may not have inherited the user's full PATH.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+# 1. Copy .envrc from the main worktree if this worktree doesn't have one yet.
+if [ ! -f "$WORKSPACE/.envrc" ]; then
+  MAIN_WORKTREE="$(git -C "$WORKSPACE" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')"
+  MAIN_ENVRC="$MAIN_WORKTREE/.envrc"
+  if [ -n "$MAIN_WORKTREE" ] && [ "$MAIN_WORKTREE" != "$WORKSPACE" ] && [ -f "$MAIN_ENVRC" ]; then
+    cp "$MAIN_ENVRC" "$WORKSPACE/.envrc"
+    echo "✓ Copied .envrc from main worktree ($MAIN_ENVRC)"
+  else
+    echo "⚠ No .envrc found in main worktree — skipping env copy"
+  fi
+fi
+
+# 2. Allow direnv (best-effort — don't fail the whole setup if direnv is missing).
+if [ -f "$WORKSPACE/.envrc" ]; then
+  if command -v direnv >/dev/null 2>&1; then
+    if direnv allow "$WORKSPACE" 2>/dev/null; then
+      echo "✓ direnv allow succeeded"
+    else
+      echo "⚠ direnv allow failed — run it manually if needed"
+    fi
+  else
+    echo "⚠ direnv not installed — install it (brew install direnv) to auto-load env vars"
+  fi
+fi
+
+# 3. Install JS dependencies so `pnpm tauri:dev` doesn't have to.
+if [ -f "$WORKSPACE/package.json" ]; then
+  if command -v pnpm >/dev/null 2>&1; then
+    echo "→ Installing pnpm dependencies..."
+    if (cd "$WORKSPACE" && pnpm install --frozen-lockfile); then
+      echo "✓ pnpm install complete"
+    else
+      echo "⚠ pnpm install failed — run it manually before tauri:dev"
+    fi
+  else
+    echo "⚠ pnpm not installed — install it (npm i -g pnpm) and re-run setup"
+  fi
+fi
+
+# 4. Precompile the Tauri (Rust) side so the first `pnpm tauri:dev` is fast.
+#    `cargo build` warms target/debug with all dependencies and the app crate;
+#    the actual dev run then only re-links what changed.
+if [ -f "$WORKSPACE/src-tauri/Cargo.toml" ]; then
+  if command -v cargo >/dev/null 2>&1; then
+    echo "→ Precompiling Tauri (cargo build, this can take several minutes)..."
+    if (cd "$WORKSPACE/src-tauri" && cargo build); then
+      echo "✓ Tauri precompile complete"
+    else
+      echo "⚠ cargo build failed — first tauri:dev will be slow but should still work"
+    fi
+  else
+    echo "⚠ cargo not installed — install Rust (https://rustup.rs) to precompile Tauri"
+  fi
+fi
+
+echo ""
+echo "Dev setup complete!"

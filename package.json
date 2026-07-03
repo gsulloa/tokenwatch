@@ -1,0 +1,21 @@
+{
+  "name": "tokenwatch-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "pnpm --filter tokenwatch dev",
+    "build": "pnpm --filter tokenwatch build",
+    "preview": "pnpm --filter tokenwatch preview",
+    "tauri:dev": "pnpm --filter tokenwatch tauri:dev",
+    "tauri:build": "pnpm --filter tokenwatch tauri:build",
+    "typecheck": "pnpm --filter tokenwatch typecheck",
+    "lint": "pnpm --filter tokenwatch lint",
+    "format": "pnpm --filter tokenwatch format",
+    "test": "pnpm --filter tokenwatch test",
+    "test:run": "pnpm --filter tokenwatch test:run",
+    "infra": "pnpm --filter infra",
+    "infra:build": "pnpm --filter infra build",
+    "infra:synth": "pnpm --filter infra cdk synth"
+  }
+}

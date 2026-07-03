@@ -1,0 +1,41 @@
+[package]
+name = "tokenwatch"
+version = "0.1.0"
+description = "A macOS menu-bar app for monitoring Claude / Codex token usage per project and workspace."
+authors = ["Gabriel Ulloa <gabriel.ulloa.e@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/gsulloa/tokenwatch"
+homepage = "https://github.com/gsulloa/tokenwatch"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "tokenwatch_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "5"
+
+[features]
+keychain = []
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
