@@ -9,7 +9,7 @@ use rusqlite::{params, Connection, Result as SqlResult};
 use crate::config::app_identity::DB_FILENAME;
 
 /// Current schema version. Bump when adding migrations.
-const CURRENT_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// Open the production database in the OS app-data directory.
 ///
@@ -63,6 +63,16 @@ fn migrate(conn: &Connection) -> SqlResult<()> {
 
     if version < 2 {
         apply_v2(conn)?;
+        set_meta(conn, "schema_version", "2")?;
+    }
+
+    if version < 3 {
+        apply_v3(conn)?;
+        set_meta(conn, "schema_version", "3")?;
+    }
+
+    if version < 4 {
+        apply_v4(conn)?;
         set_meta(conn, "schema_version", &CURRENT_SCHEMA_VERSION.to_string())?;
     }
 
@@ -105,12 +115,31 @@ fn apply_v1(conn: &Connection) -> SqlResult<()> {
 
 /// Migration v2 — backfill `project_name` using the Conductor-aware rule.
 ///
-/// Reads every row's `project_path` (the raw cwd already stored), recomputes
-/// `project_name` via `crate::ingest::derive_project_name`, and updates in
-/// place within a single transaction. Running on an already-migrated DB is a
-/// no-op (the values are already correct and the gate in `migrate` prevents
-/// re-entry).
+/// Reads every row's `project_path` (the raw cwd already stored) and recomputes
+/// `project_name` via `crate::ingest::derive_project_name`.
 fn apply_v2(conn: &Connection) -> SqlResult<()> {
+    backfill_project_names(conn)
+}
+
+/// Migration v3 — re-run the `project_name` backfill to pick up an updated
+/// worktree rule.
+fn apply_v3(conn: &Connection) -> SqlResult<()> {
+    backfill_project_names(conn)
+}
+
+/// Migration v4 — re-run the backfill again after correcting the derivation
+/// rule: Conductor `workspaces` paths resolve back to the repo (e.g. `tub2`,
+/// `argus`), and only ephemeral `worktrees` (`.../worktrees/agent-XXXX`)
+/// collapse to `"unknown"`. This repairs DBs where v3 had over-grouped
+/// Conductor projects into `"unknown"`.
+fn apply_v4(conn: &Connection) -> SqlResult<()> {
+    backfill_project_names(conn)
+}
+
+/// Recompute `project_name` for every row from its stored `project_path`,
+/// updating in place within a single transaction (atomic). Idempotent: running
+/// on already-correct data is a no-op.
+fn backfill_project_names(conn: &Connection) -> SqlResult<()> {
     // Collect all (dedup_key, project_path) pairs first, then update in a
     // single transaction so the backfill is atomic.
     let mut stmt = conn.prepare("SELECT dedup_key, project_path FROM usage_events")?;
@@ -278,7 +307,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, "2");
+        assert_eq!(version, "4");
     }
 
     #[test]
@@ -444,7 +473,7 @@ mod tests {
 
         assert_eq!(
             project_name, "tub2",
-            "project_name must be corrected to repo"
+            "conductor project_name must be corrected to the repo"
         );
         assert_eq!(
             project_path, conductor_path,
@@ -503,5 +532,45 @@ mod tests {
 
         // Non-Conductor fallback: last 2 segments → inventures/tub2
         assert_eq!(project_name, "inventures/tub2");
+    }
+
+    /// v3 re-runs the backfill so a stale "worktrees/agent-XXXX" name (produced
+    /// by an older rule) is corrected to "unknown".
+    #[test]
+    fn test_v3_backfill_corrects_worktree_names() {
+        let conn = test_conn();
+
+        let worktree_path = "/Users/x/dev/tub2/worktrees/agent-1234";
+        let row = UsageEventRow {
+            dedup_key: "msg_wt:req_wt",
+            session_id: "sess_wt",
+            project_path: worktree_path,
+            project_name: "worktrees/agent-1234", // old (wrong) value
+            model: "claude-sonnet-4-6",
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            total_tokens: 120,
+            cost: 0.0,
+            timestamp: "2026-07-01T00:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-07-01T00:00:01Z",
+        };
+        insert_event(&conn, &row).unwrap();
+
+        apply_v3(&conn).unwrap();
+
+        let project_name: String = conn
+            .query_row(
+                "SELECT project_name FROM usage_events WHERE dedup_key = 'msg_wt:req_wt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            project_name, "unknown",
+            "worktree project_name must be corrected to \"unknown\""
+        );
     }
 }

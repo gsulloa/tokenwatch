@@ -1,26 +1,4 @@
-# usage-charts Specification
-
-## Purpose
-TBD - created by archiving change usage-charts. Update Purpose after archive.
-## Requirements
-### Requirement: Consulta de series temporales agregadas
-El sistema SHALL exponer un comando `query_series` que reciba una agrupación temporal (día / semana / mes), una métrica (tokens totales / costo) y un criterio de series (modelo / proyecto / modelo-proyecto), y devuelva las etiquetas de bucket ordenadas junto con una serie por grupo alineada a esos buckets.
-
-#### Scenario: Agregación por día y modelo
-- **WHEN** se consulta bucket=día, métrica=tokens, series=modelo
-- **THEN** se devuelve una serie por modelo con la suma de tokens por día
-
-#### Scenario: Buckets vacíos rellenados
-- **WHEN** un bucket dentro del rango no tiene eventos para una serie
-- **THEN** ese punto se devuelve como 0 para mantener la línea continua
-
-#### Scenario: Costo como métrica
-- **WHEN** se consulta métrica=costo
-- **THEN** cada punto es la suma del costo estimado de los eventos del bucket
-
-#### Scenario: Series por modelo-proyecto
-- **WHEN** se consulta series=modelo-proyecto
-- **THEN** cada serie combina modelo y proyecto (p.ej. `claude-opus-4-8 · backend/madrid`)
+## MODIFIED Requirements
 
 ### Requirement: Gráfico de área apilada con controles
 La aplicación SHALL mostrar un gráfico de **área apilada (stacked area)** con tres controles segmentados —agrupación temporal (día/semana/mes), métrica (tokens/costo) y series (modelo/proyecto/modelo-proyecto)— que actualicen el gráfico al cambiar. En cada punto del eje X las series SHALL acumularse (apilarse) de modo que la altura total del apilado represente el consumo agregado de ese bucket y cada banda represente el aporte de una serie.
@@ -36,6 +14,8 @@ La aplicación SHALL mostrar un gráfico de **área apilada (stacked area)** con
 #### Scenario: Estado vacío
 - **WHEN** no hay eventos que graficar
 - **THEN** la app muestra un estado vacío en lugar de un gráfico en blanco
+
+## ADDED Requirements
 
 ### Requirement: Tabla de datos con cifras exactas
 La aplicación SHALL mostrar, debajo del gráfico, una tabla con una fila por serie y una columna por bucket, presentando las cifras exactas de la métrica seleccionada (tokens o costo). La tabla SHALL incluir una columna de total por serie y una fila de total por bucket, y SHALL respetar el mismo orden y color de series que el gráfico.
@@ -81,17 +61,8 @@ La aplicación SHALL aplicar un tema de color (claro u oscuro) según la prefere
 - **WHEN** el usuario cambia la preferencia de color del sistema mientras la app está abierta
 - **THEN** la aplicación actualiza el tema sin necesidad de reiniciarse
 
-### Requirement: Costo mostrado como estimado
-La aplicación SHALL indicar de forma visible que los valores de costo son estimados.
+## REMOVED Requirements
 
-#### Scenario: Nota de estimación visible
-- **WHEN** la métrica seleccionada es costo
-- **THEN** la UI muestra una nota de que el costo es estimado
-
-### Requirement: Refresco automático ante nuevos datos
-La aplicación SHALL escuchar el evento `usage-updated` y volver a consultar las series cuando llegue, además de mostrar la marca de tiempo del último refresh.
-
-#### Scenario: Llega usage-updated
-- **WHEN** el backend emite `usage-updated`
-- **THEN** el frontend re-consulta y actualiza el gráfico y el último refresh
-
+### Requirement: Limitar series visibles con agrupación de "otros"
+**Reason**: El usuario necesita ver todas las series por separado para no perder el detalle por proyecto/modelo; agrupar en "otros" oculta información justo cuando hay muchas series.
+**Migration**: Todas las series se renderizan individualmente en el gráfico apilado y en la tabla. No existe reemplazo del bucket "otros"; el detalle completo queda disponible en la tabla de cifras exactas.

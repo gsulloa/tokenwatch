@@ -30,11 +30,12 @@ export interface SeriesResponse {
   bucket: Bucket;
 }
 
-/** Metadata about the usage store. */
+/** Metadata about the usage store. Mirrors the Rust `UsageMeta` (camelCase). */
 export interface UsageMeta {
   lastRefreshAt: string | null;
   eventCount: number;
-  dateRange: { min: string | null; max: string | null };
+  earliestDate: string | null;
+  latestDate: string | null;
 }
 
 /** Summary returned by refresh_usage command. */
