@@ -39,20 +39,27 @@ describe("UsageChart", () => {
     const { container } = render(<UsageChart response={MOCK_RESPONSE} />);
     // recharts renders a recharts-wrapper div inside ResponsiveContainer
     // In jsdom, ResponsiveContainer renders a div wrapper even if SVG may not fully render
-    expect(container.querySelector(".recharts-wrapper, [class*=recharts]") ?? container.firstChild).toBeTruthy();
+    expect(
+      container.querySelector(".recharts-wrapper, [class*=recharts]") ??
+        container.firstChild,
+    ).toBeTruthy();
     // The empty state should NOT be shown when we have data
     expect(screen.queryByRole("status", { name: "Sin datos" })).toBeNull();
   });
 
   it("renders the empty state when there are no buckets", () => {
     render(<UsageChart response={EMPTY_RESPONSE} />);
-    expect(screen.getByRole("status", { name: "Sin datos" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Sin datos" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Sin datos de uso")).toBeInTheDocument();
   });
 
   it("renders the empty state when all points are zero", () => {
     render(<UsageChart response={ALL_ZERO_RESPONSE} />);
-    expect(screen.getByRole("status", { name: "Sin datos" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Sin datos" }),
+    ).toBeInTheDocument();
   });
 
   it("shows the cost estimation note when metric is cost", () => {
@@ -70,25 +77,19 @@ describe("UsageChart", () => {
     expect(screen.queryByRole("note")).toBeNull();
   });
 
-  it("groups extra series into 'Otros' when there are more than top-N", () => {
-    // Create 10 series (more than the TOP_N=8 limit)
+  it("renders all series individually — no 'Otros' or grouping notice — with more than 8 series", () => {
     const manySeries: SeriesResponse = {
       bucket: "day",
       metric: "tokens",
       buckets: ["2026-07-01"],
       series: Array.from({ length: 10 }, (_, i) => ({
         name: `series-${String(i)}`,
-        points: [100 - i], // Descending totals so order is predictable
+        points: [100 - i],
       })),
     };
     render(<UsageChart response={manySeries} />);
-    // The "Otros" grouping message should appear
-    expect(screen.getByText(/agrupada/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 serie/i)).toBeInTheDocument();
-  });
-
-  it("does not show Otros message when series count is at or below top-N", () => {
-    render(<UsageChart response={MOCK_RESPONSE} />);
+    // No grouping notice should appear
     expect(screen.queryByText(/agrupada/i)).toBeNull();
+    expect(screen.queryByText(/Otros/i)).toBeNull();
   });
 });

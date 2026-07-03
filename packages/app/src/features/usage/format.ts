@@ -21,3 +21,20 @@ export function formatTokens(value: number): string {
 export function formatCost(value: number): string {
   return `$${value.toFixed(2)}`;
 }
+
+/**
+ * Format a raw token count with thousands separators, no K/M abbreviation.
+ * Examples: 500 → "500", 1200000 → "1,200,000", 0 → "0"
+ */
+export function formatTokensExact(value: number): string {
+  return Math.round(value).toLocaleString("en-US");
+}
+
+/**
+ * Format a fraction as a percentage string.
+ * Examples: formatPercent(25, 100) → "25.0%", formatPercent(0, 0) → "0%"
+ */
+export function formatPercent(value: number, total: number): string {
+  if (total === 0) return "0%";
+  return `${((value / total) * 100).toFixed(1)}%`;
+}
