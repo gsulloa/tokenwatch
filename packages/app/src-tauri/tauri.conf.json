@@ -20,7 +20,21 @@
         "minHeight": 520,
         "resizable": true,
         "maximizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "visible": false,
+        "decorations": true,
+        "skipTaskbar": false
+      },
+      {
+        "label": "popover",
+        "title": "TokenWatch",
+        "width": 360,
+        "height": 480,
+        "resizable": false,
+        "visible": false,
+        "decorations": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true
       }
     ],
     "security": {

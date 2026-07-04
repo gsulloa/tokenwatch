@@ -266,6 +266,25 @@ pub fn get_ingest_file(conn: &Connection, path: &str) -> SqlResult<Option<(u64, 
     }
 }
 
+/// Read a generic meta value by key. Returns `None` if the key does not exist.
+pub fn meta_get(conn: &Connection, key: &str) -> SqlResult<Option<String>> {
+    let result = conn.query_row(
+        "SELECT value FROM meta WHERE key = ?1",
+        params![key],
+        |row| row.get::<_, String>(0),
+    );
+    match result {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Write (upsert) a generic meta key/value pair.
+pub fn meta_set(conn: &Connection, key: &str, value: &str) -> SqlResult<()> {
+    set_meta(conn, key, value)
+}
+
 /// Update the `last_refresh_at` meta entry.
 pub fn set_last_refresh(conn: &Connection, ts: &str) -> SqlResult<()> {
     set_meta(conn, "last_refresh_at", ts)

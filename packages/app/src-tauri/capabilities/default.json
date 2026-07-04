@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for TokenWatch",
-  "windows": ["main"],
+  "windows": ["main", "popover"],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -20,6 +20,7 @@
     "core:path:default",
     "dialog:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "notification:default"
   ]
 }
