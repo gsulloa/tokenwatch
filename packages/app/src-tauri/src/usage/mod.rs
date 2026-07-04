@@ -106,6 +106,23 @@ pub struct UsageMeta {
     pub latest_date: Option<String>,
 }
 
+/// A single project row returned by `query_today_by_project`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectUsageRow {
+    pub project: String,
+    pub tokens: i64,
+    pub pct: f64,
+}
+
+/// Returned by `query_today_by_project`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodayByProject {
+    pub rows: Vec<ProjectUsageRow>,
+    pub total_tokens: i64,
+}
+
 // ---------------------------------------------------------------------------
 // Shared app state
 // ---------------------------------------------------------------------------
@@ -180,6 +197,62 @@ pub fn usage_meta(state: State<'_, AppState>) -> Result<UsageMeta, String> {
         earliest_date,
         latest_date,
     })
+}
+
+/// Query token consumption for today grouped by project (local time).
+#[tauri::command]
+pub fn query_today_by_project(state: State<'_, AppState>) -> Result<TodayByProject, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+
+    // Compute start-of-today in local time, then convert to UTC RFC3339.
+    let today_local = chrono::Local::now().date_naive();
+    let today_start_local = today_local
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight always valid");
+    let today_start_utc: chrono::DateTime<chrono::Utc> =
+        chrono::TimeZone::from_local_datetime(&chrono::Local, &today_start_local)
+            .single()
+            .ok_or_else(|| "ambiguous local midnight".to_owned())?
+            .with_timezone(&chrono::Utc);
+    let since = today_start_utc.to_rfc3339();
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT project_name, CAST(SUM(total_tokens) AS INTEGER)
+             FROM usage_events
+             WHERE timestamp >= ?1
+             GROUP BY project_name
+             ORDER BY 2 DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let raw: Vec<(String, i64)> = stmt
+        .query_map([&since], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let total_tokens: i64 = raw.iter().map(|(_, t)| t).sum();
+
+    let rows = raw
+        .into_iter()
+        .map(|(project, tokens)| {
+            let pct = if total_tokens > 0 {
+                tokens as f64 / total_tokens as f64 * 100.0
+            } else {
+                0.0
+            };
+            ProjectUsageRow {
+                project,
+                tokens,
+                pct,
+            }
+        })
+        .collect();
+
+    Ok(TodayByProject { rows, total_tokens })
 }
 
 // ---------------------------------------------------------------------------
