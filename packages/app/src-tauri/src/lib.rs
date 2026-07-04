@@ -107,18 +107,27 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .items(&[&dashboard_item, &quit_item])
         .build()?;
 
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or("no default window icon")?;
+    // Menu-bar icon: a monochrome gauge glyph. Marked as a template image so
+    // macOS renders it from the alpha mask — black on light menu bars, white on
+    // dark ones — instead of reusing the full-color app icon.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/menubar-template.png"))?;
 
     let _tray = TrayIconBuilder::new()
         .icon(icon)
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "dashboard" => {
+                // Switch to Regular first so the dashboard can come to the front
+                // and its icon shows in the Dock (Accessory apps have no Dock icon).
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+                    set_dock_icon(app);
+                }
                 if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.unminimize();
                     let _ = win.show();
                     let _ = win.set_focus();
                 }
@@ -175,6 +184,34 @@ fn position_popover_near_click(
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
+/// Assign the app's Dock icon at runtime (macOS).
+///
+/// In dev builds Tauri sets the Dock icon only once, at startup. Because we boot
+/// as an `Accessory` app (no Dock presence) and only switch to `Regular` when the
+/// dashboard opens, that initial assignment is lost and macOS falls back to the
+/// generic executable icon. Re-applying it here — on the main thread, right after
+/// the policy switch — keeps the real icon in the Dock. No-op cost in release,
+/// where the bundled `.app` already carries the icon.
+#[cfg(target_os = "macos")]
+fn set_dock_icon(app: &tauri::AppHandle) {
+    const ICON_PNG: &[u8] = include_bytes!("../icons/icon.png");
+
+    let _ = app.run_on_main_thread(|| {
+        use objc2::{AnyThread, MainThreadMarker};
+        use objc2_app_kit::{NSApplication, NSImage};
+        use objc2_foundation::NSData;
+
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let data = NSData::with_bytes(ICON_PNG);
+        if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+            let ns_app = NSApplication::sharedApplication(mtm);
+            unsafe { ns_app.setApplicationIconImage(Some(&image)) };
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Frontend-invokable commands
 // ---------------------------------------------------------------------------
@@ -185,7 +222,10 @@ fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
     // Switch to Regular so the dashboard can be shown, focused and appear in
     // the Dock / app switcher; we revert to Accessory when it is closed.
     #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        set_dock_icon(&app);
+    }
 
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
