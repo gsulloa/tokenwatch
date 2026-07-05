@@ -1,13 +1,18 @@
 {
   "name": "tokenwatch",
   "private": false,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A macOS menu-bar app for monitoring Claude / Codex token usage per project and workspace.",
   "license": "MIT",
   "author": "Gabriel Ulloa <gabriel.ulloa.e@gmail.com>",
   "homepage": "https://github.com/gsulloa/tokenwatch#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/gsulloa/tokenwatch.git" },
-  "bugs": { "url": "https://github.com/gsulloa/tokenwatch/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gsulloa/tokenwatch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gsulloa/tokenwatch/issues"
+  },
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
