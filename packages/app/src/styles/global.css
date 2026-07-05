@@ -441,6 +441,7 @@ select:focus-visible {
   opacity: 0.35;
 }
 
+/* First column (series/project name) stays fixed during horizontal scroll */
 .usage-table__series-cell {
   padding: var(--space-xs) var(--space-sm);
   text-align: left;
@@ -448,6 +449,23 @@ select:focus-visible {
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+/* Keep the fixed column's background opaque in row hover/hovered states */
+.usage-table__row:hover .usage-table__series-cell,
+.usage-table__row--hovered .usage-table__series-cell {
+  background: var(--surface-2);
+}
+
+/* Header corner: fixed on both axes, above the sticky column and header row */
+.usage-table thead th.usage-table__series-cell {
+  z-index: 3;
+  background: var(--surface-2);
 }
 
 .usage-table__num-cell {
@@ -493,4 +511,9 @@ select:focus-visible {
 
 .usage-table tfoot .usage-table__total-cell {
   background: var(--surface-3);
+}
+
+/* Footer name cell: opaque so numeric cells scroll behind it */
+.usage-table tfoot .usage-table__series-cell {
+  background: var(--surface-2);
 }

@@ -74,7 +74,7 @@ La aplicación SHALL mostrar un gráfico de **área apilada (stacked area)** con
 - **THEN** la app muestra un estado vacío en lugar de un gráfico en blanco
 
 ### Requirement: Tabla de datos con cifras exactas
-La aplicación SHALL mostrar, debajo del gráfico, una tabla con una fila por serie y una columna por bucket, presentando las cifras exactas de la métrica seleccionada (tokens o costo). La tabla SHALL incluir una columna de total por serie y una fila de total por bucket, y SHALL respetar el mismo orden y color de series que el gráfico.
+La aplicación SHALL mostrar, debajo del gráfico, una tabla con una fila por serie y una columna por bucket, presentando las cifras exactas de la métrica seleccionada (tokens o costo). La tabla SHALL incluir una columna de total por serie y una fila de total por bucket, y SHALL respetar el mismo orden y color de series que el gráfico. La columna de nombre de serie/proyecto (la primera columna) SHALL permanecer fija durante el scroll horizontal de la tabla, tanto en el encabezado como en las filas de datos y en la fila de totales.
 
 #### Scenario: Lectura de cifras exactas
 - **WHEN** el usuario mira la tabla
@@ -87,6 +87,10 @@ La aplicación SHALL mostrar, debajo del gráfico, una tabla con una fila por se
 #### Scenario: Consistencia con el gráfico
 - **WHEN** el gráfico muestra un color y orden para una serie
 - **THEN** la fila correspondiente en la tabla usa el mismo color de identificación y el mismo orden
+
+#### Scenario: Columna de nombre fija al scrollear horizontalmente
+- **WHEN** la tabla tiene más buckets de los que caben y el usuario hace scroll horizontal
+- **THEN** la primera columna (nombre de serie/proyecto) permanece visible y fija a la izquierda mientras las columnas numéricas se desplazan por debajo, sin transparencias ni solapamientos ilegibles
 
 ### Requirement: Vista de dashboard con tarjetas de resumen
 La aplicación SHALL presentar la vista de uso como un dashboard: una barra superior fija (nombre y subtítulo, marca de tiempo del último refresh y botón de actualizar), una fila de tarjetas KPI de resumen, una toolbar con los controles, y paneles tipo card para el gráfico y la tabla. Las tarjetas KPI SHALL mostrar al menos el total de la métrica seleccionada, el número de series, el número de períodos (buckets), el número de eventos y el rango de fechas de los datos.
