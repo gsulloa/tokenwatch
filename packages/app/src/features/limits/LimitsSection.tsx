@@ -102,6 +102,7 @@ export function LimitsSection({ snapshot, loading = false }: LimitsSectionProps)
               label="Sesión 5h"
               utilization={snapshot.session.utilization}
               resetsAt={snapshot.session.resetsAt}
+              windowMs={5 * 60 * 60 * 1000}
             />
           )}
 
@@ -110,6 +111,7 @@ export function LimitsSection({ snapshot, loading = false }: LimitsSectionProps)
               label="Semana"
               utilization={snapshot.weekly.utilization}
               resetsAt={snapshot.weekly.resetsAt}
+              windowMs={7 * 24 * 60 * 60 * 1000}
             />
           )}
 
@@ -149,6 +151,7 @@ export function LimitsSection({ snapshot, loading = false }: LimitsSectionProps)
                     utilization={win.utilization}
                     resetsAt={win.resetsAt}
                     compact
+                    windowMs={7 * 24 * 60 * 60 * 1000}
                   />
                 ))}
               </div>

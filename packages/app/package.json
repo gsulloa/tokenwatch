@@ -6,8 +6,13 @@
   "license": "MIT",
   "author": "Gabriel Ulloa <gabriel.ulloa.e@gmail.com>",
   "homepage": "https://github.com/gsulloa/tokenwatch#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/gsulloa/tokenwatch.git" },
-  "bugs": { "url": "https://github.com/gsulloa/tokenwatch/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gsulloa/tokenwatch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gsulloa/tokenwatch/issues"
+  },
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
@@ -27,6 +32,8 @@
     "release:dry": "bash scripts/release.sh --dry-run"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.2.9",
+    "@fontsource-variable/geist-mono": "^5.2.8",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "@tauri-apps/plugin-fs": "^2.2.0",
