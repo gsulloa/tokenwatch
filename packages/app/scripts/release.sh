@@ -193,6 +193,11 @@ TEMP_BRANCH="release/tmp-$$"
 step "Creating temporary release branch off origin/$FROM_BRANCH"
 run "git switch -c '$TEMP_BRANCH' 'origin/$FROM_BRANCH'"
 
+# Generate changelog BEFORE bumping so promoteUnreleased() promotes real content.
+# Order matters: generate → bump promotes [Unreleased] → [X.Y.Z] - <date>.
+step "Generating changelog from commits"
+run "(cd '$ROOT' && node scripts/generate-changelog.mjs)"
+
 step "Bumping version ($KIND)"
 if [ "$DRY" = "1" ]; then
   # Compute what the bump would produce without writing any files.

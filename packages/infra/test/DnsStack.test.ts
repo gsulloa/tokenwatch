@@ -25,10 +25,10 @@ describe("TokenWatchDnsStack", () => {
 
   // ── ACM Certificate ────────────────────────────────────────────────────────
 
-  it("creates a wildcard ACM certificate for tokenwatch.app", () => {
+  it("creates a wildcard ACM certificate for tokenwatch.gulloa.click", () => {
     template.hasResourceProperties("AWS::CertificateManager::Certificate", {
-      DomainName: "tokenwatch.app",
-      SubjectAlternativeNames: Match.arrayWith(["*.tokenwatch.app"]),
+      DomainName: "tokenwatch.gulloa.click",
+      SubjectAlternativeNames: Match.arrayWith(["*.tokenwatch.gulloa.click"]),
     });
   });
 
@@ -58,10 +58,10 @@ describe("TokenWatchDnsStack", () => {
     });
   });
 
-  it("exports releases-public-url with value https://releases.tokenwatch.app", () => {
+  it("exports releases-public-url with value https://releases.tokenwatch.gulloa.click", () => {
     template.hasResourceProperties("AWS::SSM::Parameter", {
       Name: "/TokenWatch/DnsStack/releases-public-url",
-      Value: "https://releases.tokenwatch.app",
+      Value: "https://releases.tokenwatch.gulloa.click",
     });
   });
 });

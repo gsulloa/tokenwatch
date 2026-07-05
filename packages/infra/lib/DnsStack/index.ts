@@ -28,7 +28,7 @@ export class DnsStack extends cdk.Stack {
     });
 
     // ── Wildcard ACM Certificate ───────────────────────────────────────────────
-    // Wildcard covers releases.tokenwatch.app today and any future subdomain.
+    // Wildcard covers releases.tokenwatch.gulloa.click today and any future subdomain.
     // DNS-validated against the imported zone; same region (us-east-1) so no
     // cross-region dance is needed.
     const certificate = new Certificate(this, "DomainCertificate", {
@@ -65,7 +65,7 @@ export class DnsStack extends cdk.Stack {
    * the `DOMAIN_NAME` compile-time constant on purpose: a concrete zone name
    * lets CDK correctly resolve fully-qualified record names. If the name were a
    * token, CDK could not tell that an FQDN `recordName` already ends with the
-   * zone and would append the zone again (e.g. `releases.tokenwatch.app.tokenwatch.app.`).
+   * zone and would append the zone again (e.g. `releases.tokenwatch.gulloa.click.tokenwatch.gulloa.click.`).
    */
   static getHostedZone(scope: Construct): IHostedZone {
     const hostedZoneId = StringParameter.valueForStringParameter(

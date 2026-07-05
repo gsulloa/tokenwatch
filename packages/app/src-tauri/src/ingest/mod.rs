@@ -66,17 +66,18 @@ struct RawRecord {
 ///
 /// Rules (in order):
 /// 1. `cwd` is `None` or empty → `"unknown"`.
-/// 2. If the path contains the consecutive pair `conductor` → `workspaces`
-///    and there is at least one component after `workspaces`, return that
-///    next component (the `<repo>`), collapsing workspace city, subpaths,
-///    and submodules into the repo name.
-///    If `conductor/workspaces` is present but there is no component after
-///    it → `"unknown"`.
-/// 3. Otherwise (no Conductor path) → last 1–2 significant segments.
+/// 2. If the path contains any `worktrees` component (e.g. an ephemeral
+///    `.../.claude/worktrees/agent-XXXX`), it can't be attributed to a project
+///    → `"unknown"`, so all such worktrees are grouped together.
+/// 3. If the path contains the consecutive pair `conductor` → `workspaces`,
+///    return the component right after `workspaces` (the `<repo>`), collapsing
+///    workspace city, subpaths, and submodules into the repo name.
+/// 4. Otherwise → last 1–2 significant segments.
 ///
 /// Examples:
 /// - `/Users/x/conductor/workspaces/tub2/chengdu-v4` → `tub2`
 /// - `/Users/x/conductor/workspaces/argus/cairo/packages/app` → `argus`
+/// - `/Users/x/dev/inventures/tub2/.claude/worktrees/agent-abcd` → `unknown`
 /// - `/Users/x/dev/inventures/tub2` → `inventures/tub2`
 pub fn derive_project_name(cwd: Option<&str>) -> String {
     let cwd = match cwd {
@@ -101,10 +102,15 @@ pub fn derive_project_name(cwd: Option<&str>) -> String {
         return "unknown".to_owned();
     }
 
-    // Scan for the consecutive pair "conductor" → "workspaces".
+    // Ephemeral agent worktrees (any "worktrees" component, e.g.
+    // .../.claude/worktrees/agent-XXXX) → group them all under "unknown".
+    if components.contains(&"worktrees") {
+        return "unknown".to_owned();
+    }
+
+    // Conductor layout: "conductor" → "workspaces" → <repo>. Return the repo.
     for i in 0..components.len().saturating_sub(1) {
         if components[i] == "conductor" && components[i + 1] == "workspaces" {
-            // The repo is the component immediately after "workspaces".
             return match components.get(i + 2) {
                 Some(repo) => (*repo).to_owned(),
                 None => "unknown".to_owned(),
@@ -429,6 +435,21 @@ mod tests {
     }
 
     #[test]
+    fn test_derive_worktrees_component() {
+        // Any path with a "worktrees" component → grouped under "unknown"
+        assert_eq!(
+            derive_project_name(Some(
+                "/Users/x/dev/inventures/tub2/.claude/worktrees/agent-abcd"
+            )),
+            "unknown"
+        );
+        assert_eq!(
+            derive_project_name(Some("/Users/x/worktrees/agent-1234/packages/app")),
+            "unknown"
+        );
+    }
+
+    #[test]
     fn test_derive_non_conductor_path_keeps_fallback() {
         // /Users/x/dev/inventures/tub2 → inventures/tub2
         assert_eq!(
@@ -437,8 +458,7 @@ mod tests {
         );
     }
 
-    // The existing two-segment test: with the Conductor rule, backend/madrid
-    // now resolves to "backend" (it IS a Conductor path).
+    // A Conductor path resolves to the repo, even at two segments after ws.
     #[test]
     fn test_derive_project_name_two_segments() {
         assert_eq!(

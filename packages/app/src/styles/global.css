@@ -187,3 +187,333 @@ select:focus-visible {
   outline-offset: -1px;
   border-color: transparent;
 }
+
+/* ── Dashboard Shell ─────────────────────────────────────────────────────── */
+
+.dashboard {
+  min-height: 100vh;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font-stack);
+}
+
+.dashboard__content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* ── Top App Bar ─────────────────────────────────────────────────────────── */
+
+.dashboard__topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-sm) var(--space-lg);
+}
+
+.dashboard__topbar-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.dashboard__app-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.dashboard__app-subtitle {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.dashboard__topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.dashboard__refresh-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dashboard__refresh-btn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: var(--space-2xs) var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--duration-short), border-color var(--duration-short);
+  white-space: nowrap;
+}
+
+.dashboard__refresh-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.dashboard__refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── KPI Grid ────────────────────────────────────────────────────────────── */
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-md);
+}
+
+.kpi-card {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.kpi-card__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kpi-card__value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kpi-card__sub {
+  font-size: 11px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kpi-card__value--mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+/* ── Toolbar (controls) ──────────────────────────────────────────────────── */
+
+.toolbar {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-md) var(--space-lg);
+}
+
+/* ── Panel (chart / table cards) ─────────────────────────────────────────── */
+
+.panel {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.panel__header {
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.panel__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.panel__body {
+  padding: var(--space-lg);
+}
+
+.panel__body--flush {
+  padding: 0;
+}
+
+/* ── Error alert ─────────────────────────────────────────────────────────── */
+
+.dashboard__error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs) var(--space-md);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ── Usage Table ──────────────────────────────────────────────────────────── */
+
+.usage-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.usage-table thead tr {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+}
+
+.usage-table thead th {
+  padding: var(--space-xs) var(--space-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.usage-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background var(--duration-short), opacity var(--duration-short);
+  cursor: default;
+}
+
+.usage-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.usage-table__row:hover,
+.usage-table__row--hovered {
+  background: var(--surface-2);
+}
+
+.usage-table__row--dimmed {
+  opacity: 0.35;
+}
+
+/* First column (series/project name) stays fixed during horizontal scroll */
+.usage-table__series-cell {
+  padding: var(--space-xs) var(--space-sm);
+  text-align: left;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+/* Keep the fixed column's background opaque in row hover/hovered states */
+.usage-table__row:hover .usage-table__series-cell,
+.usage-table__row--hovered .usage-table__series-cell {
+  background: var(--surface-2);
+}
+
+/* Header corner: fixed on both axes, above the sticky column and header row */
+.usage-table thead th.usage-table__series-cell {
+  z-index: 3;
+  background: var(--surface-2);
+}
+
+.usage-table__num-cell {
+  padding: var(--space-xs) var(--space-sm);
+  text-align: right;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.usage-table__total-cell {
+  font-weight: 600;
+  background: var(--surface-2);
+  border-left: 1px solid var(--border);
+}
+
+/* Color dot chip next to series name */
+.usage-table__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: var(--space-xs);
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.usage-table__name {
+  vertical-align: middle;
+  color: var(--text);
+}
+
+/* Footer / totals row */
+.usage-table tfoot tr {
+  background: var(--surface-2);
+  border-top: 2px solid var(--border-strong);
+}
+
+.usage-table__footer-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.usage-table tfoot .usage-table__total-cell {
+  background: var(--surface-3);
+}
+
+/* Footer name cell: opaque so numeric cells scroll behind it */
+.usage-table tfoot .usage-table__series-cell {
+  background: var(--surface-2);
+}

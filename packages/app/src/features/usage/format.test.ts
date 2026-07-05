@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTokens, formatCost } from "./format";
+import { formatTokens, formatCost, formatTokensExact, formatPercent } from "./format";
 
 describe("formatTokens", () => {
   it("formats values under 1K with no suffix", () => {
@@ -37,5 +37,54 @@ describe("formatCost", () => {
 
   it("formats large costs correctly", () => {
     expect(formatCost(1234.56)).toBe("$1234.56");
+  });
+});
+
+describe("formatTokensExact", () => {
+  it("formats zero", () => {
+    expect(formatTokensExact(0)).toBe("0");
+  });
+
+  it("formats small numbers without separators", () => {
+    expect(formatTokensExact(500)).toBe("500");
+    expect(formatTokensExact(999)).toBe("999");
+  });
+
+  it("formats thousands with comma separator", () => {
+    expect(formatTokensExact(1000)).toBe("1,000");
+    expect(formatTokensExact(1500)).toBe("1,500");
+    expect(formatTokensExact(10000)).toBe("10,000");
+  });
+
+  it("formats millions with comma separators", () => {
+    expect(formatTokensExact(1_200_000)).toBe("1,200,000");
+    expect(formatTokensExact(1_000_000)).toBe("1,000,000");
+  });
+
+  it("rounds fractional values", () => {
+    expect(formatTokensExact(500.7)).toBe("501");
+    expect(formatTokensExact(1499.4)).toBe("1,499");
+  });
+});
+
+describe("formatPercent", () => {
+  it("handles total=0 gracefully", () => {
+    expect(formatPercent(0, 0)).toBe("0%");
+    expect(formatPercent(50, 0)).toBe("0%");
+  });
+
+  it("formats simple percentages with one decimal", () => {
+    expect(formatPercent(25, 100)).toBe("25.0%");
+    expect(formatPercent(50, 100)).toBe("50.0%");
+    expect(formatPercent(100, 100)).toBe("100.0%");
+  });
+
+  it("formats fractional percentages", () => {
+    expect(formatPercent(1, 3)).toBe("33.3%");
+    expect(formatPercent(2, 3)).toBe("66.7%");
+  });
+
+  it("formats zero value", () => {
+    expect(formatPercent(0, 100)).toBe("0.0%");
   });
 });

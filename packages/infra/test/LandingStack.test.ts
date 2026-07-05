@@ -63,10 +63,10 @@ describe("TokenWatchLandingStack", () => {
     });
   });
 
-  it("distribution declares tokenwatch.app and www.tokenwatch.app aliases", () => {
+  it("distribution declares tokenwatch.gulloa.click and www.tokenwatch.gulloa.click aliases", () => {
     template.hasResourceProperties("AWS::CloudFront::Distribution", {
       DistributionConfig: {
-        Aliases: Match.arrayWith(["tokenwatch.app", "www.tokenwatch.app"]),
+        Aliases: Match.arrayWith(["tokenwatch.gulloa.click", "www.tokenwatch.gulloa.click"]),
       },
     });
   });
@@ -83,17 +83,17 @@ describe("TokenWatchLandingStack", () => {
 
   // ── Route53 Records ───────────────────────────────────────────────────────
 
-  it("creates an A alias record for tokenwatch.app", () => {
+  it("creates an A alias record for tokenwatch.gulloa.click", () => {
     template.hasResourceProperties("AWS::Route53::RecordSet", {
       Type: "A",
-      Name: "tokenwatch.app.",
+      Name: "tokenwatch.gulloa.click.",
     });
   });
 
-  it("creates an AAAA alias record for tokenwatch.app", () => {
+  it("creates an AAAA alias record for tokenwatch.gulloa.click", () => {
     template.hasResourceProperties("AWS::Route53::RecordSet", {
       Type: "AAAA",
-      Name: "tokenwatch.app.",
+      Name: "tokenwatch.gulloa.click.",
     });
   });
 

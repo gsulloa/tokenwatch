@@ -63,7 +63,7 @@ export function PrivacyPolicy() {
       <h2>Overview</h2>
       <p>
         This Privacy Policy covers two things: the TokenWatch website at{" "}
-        <strong>tokenwatch.app</strong> and the <strong>TokenWatch desktop application</strong>.
+        <strong>tokenwatch.gulloa.click</strong> and the <strong>TokenWatch desktop application</strong>.
         We want you to know plainly what information is collected, where it goes, and
         what we do not do. The website uses <strong>no cookies</strong> and no
         client-side analytics or tracking scripts. No consent banner appears because
@@ -72,12 +72,12 @@ export function PrivacyPolicy() {
       <p>
         TokenWatch is operated by Gabriel Ulloa ("we", "us"). For legal and privacy
         notices, we can be reached at{" "}
-        <a href="mailto:privacy@tokenwatch.app">privacy@tokenwatch.app</a>.
+        <a href="mailto:privacy@tokenwatch.gulloa.click">privacy@tokenwatch.gulloa.click</a>.
       </p>
 
       <h2>Information collected by the website</h2>
       <p>
-        When you visit tokenwatch.app, our CDN — <strong>Amazon CloudFront</strong> — records
+        When you visit tokenwatch.gulloa.click, our CDN — <strong>Amazon CloudFront</strong> — records
         standard server-side access logs. These logs include:
       </p>
       <ul>
@@ -152,7 +152,7 @@ export function PrivacyPolicy() {
         TokenWatch includes an optional in-app feedback dialog. This dialog is entirely
         voluntary — it must be actively opened and submitted by you. When you choose to
         submit feedback, the following data is sent to a server we operate at{" "}
-        <strong>feedback.tokenwatch.app</strong> and stored in Amazon DynamoDB and a
+        <strong>feedback.tokenwatch.gulloa.click</strong> and stored in Amazon DynamoDB and a
         private Amazon S3 bucket:
       </p>
       <ul>
@@ -227,14 +227,14 @@ export function PrivacyPolicy() {
         and over, or the age of digital consent applicable in their jurisdiction,
         whichever is higher. We do not knowingly collect personal data from children. If
         you believe a child has submitted personal data to us, please contact us at{" "}
-        <a href="mailto:privacy@tokenwatch.app">privacy@tokenwatch.app</a> and we will
+        <a href="mailto:privacy@tokenwatch.gulloa.click">privacy@tokenwatch.gulloa.click</a> and we will
         promptly delete it.
       </p>
 
       <h2>Contact</h2>
       <p>
         For privacy inquiries, contact us at{" "}
-        <a href="mailto:privacy@tokenwatch.app">privacy@tokenwatch.app</a>.
+        <a href="mailto:privacy@tokenwatch.gulloa.click">privacy@tokenwatch.gulloa.click</a>.
       </p>
     </LegalPage>
   );
@@ -256,7 +256,7 @@ export function TermsOfService() {
       <ul>
         <li>
           <strong>"TokenWatch"</strong> or the <strong>"Software"</strong> means the TokenWatch
-          desktop application and the accompanying website at tokenwatch.app.
+          desktop application and the accompanying website at tokenwatch.gulloa.click.
         </li>
         <li>
           <strong>"You"</strong> or <strong>"User"</strong> means any individual or
@@ -392,7 +392,7 @@ export function TermsOfService() {
       <h2>Contact</h2>
       <p>
         For questions about these terms, contact us at{" "}
-        <a href="mailto:privacy@tokenwatch.app">privacy@tokenwatch.app</a>.
+        <a href="mailto:privacy@tokenwatch.gulloa.click">privacy@tokenwatch.gulloa.click</a>.
       </p>
     </LegalPage>
   );

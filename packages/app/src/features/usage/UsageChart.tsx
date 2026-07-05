@@ -1,85 +1,270 @@
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
 } from "recharts";
-import type { SeriesResponse, Series } from "./types";
-import { colorForSeries } from "./colors";
-import { formatTokens, formatCost } from "./format";
+import type { TooltipProps } from "recharts";
+import type { Bucket, SeriesResponse } from "./types";
+import { buildColorMap } from "./colors";
+import { formatTokens, formatCost, formatTokensExact, formatPercent } from "./format";
+import { orderSeries } from "./seriesUtils";
 
-/** Maximum number of series to display individually before grouping into "Otros". */
-const TOP_N = 8;
+// ── X-axis tick formatters ────────────────────────────────────────────────────
 
-/** The name shown for the aggregated remainder series. */
-const OTROS_LABEL = "Otros";
+/**
+ * Format a bucket label for the X axis.
+ *
+ * For "hour" buckets the backend returns labels like "2026-07-04 14:00"
+ * (already in local time). We display just the time part ("14:00"), but also
+ * include the date on the first bucket of a new day to aid readability.
+ *
+ * For all other granularities the label is returned as-is.
+ */
+function formatXAxisTick(label: string, bucket: Bucket, _index: number): string {
+  if (bucket !== "hour") return label;
 
-interface ProcessedData {
-  /** Row data for recharts: [{ bucket: string, [seriesName]: number }] */
-  rows: Record<string, string | number>[];
-  /** The series names to actually render as lines (top-N + maybe "Otros") */
-  visibleSeriesNames: string[];
-  /** How many series were grouped into "Otros" (0 if no grouping needed) */
-  otrosCount: number;
+  // Expected format: "YYYY-MM-DD HH:00"
+  const spaceIdx = label.indexOf(" ");
+  if (spaceIdx === -1) return label;
+
+  const timePart = label.slice(spaceIdx + 1); // "HH:00"
+  return timePart;
 }
 
 /**
- * Transform a SeriesResponse into recharts row data, applying top-N grouping.
+ * Compute interval for XAxis ticks so hourly charts don't crowd.
+ * For ≤24 ticks show all; for ≤48 show every 2nd; otherwise every 4th.
  */
-function processSeriesResponse(response: SeriesResponse): ProcessedData {
-  const { buckets, series } = response;
+function computeTickInterval(bucketCount: number, bucket: Bucket): number {
+  if (bucket !== "hour") return 0; // Recharts default (show all)
+  if (bucketCount <= 24) return 0;
+  if (bucketCount <= 48) return 1;
+  return 3;
+}
 
-  // Sort series by total descending
-  const sorted = [...series].sort((a, b) => {
-    const sumA = a.points.reduce((acc, v) => acc + v, 0);
-    const sumB = b.points.reduce((acc, v) => acc + v, 0);
-    return sumB - sumA;
-  });
+// ── Custom Tooltip ───────────────────────────────────────────────────────────
 
-  const topSeries = sorted.slice(0, TOP_N);
-  const otrosSeries = sorted.slice(TOP_N);
-  const otrosCount = otrosSeries.length;
+interface CustomTooltipProps extends TooltipProps<number, string> {
+  isCost: boolean;
+  orderedNames: string[];
+  colorMap: Map<string, string>;
+  bucketTotals: number[];
+  buckets: string[];
+}
 
-  // Build visible series (top-N + optional "Otros")
-  const visibleSeries: Series[] = [...topSeries];
-  if (otrosCount > 0) {
-    // Aggregate the remainder into a single "Otros" series
-    const otrosPoints = buckets.map((_, i) =>
-      otrosSeries.reduce((acc, s) => acc + (s.points[i] ?? 0), 0),
-    );
-    visibleSeries.push({ name: OTROS_LABEL, points: otrosPoints });
+function CustomTooltip({
+  active,
+  payload,
+  label,
+  isCost,
+  orderedNames,
+  colorMap,
+  bucketTotals,
+  buckets,
+}: CustomTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const bucketIndex = buckets.indexOf(label as string);
+  const bucketTotal = bucketIndex >= 0 ? (bucketTotals[bucketIndex] ?? 0) : 0;
+
+  // Build a map from series name → value from payload
+  const valueMap = new Map<string, number>();
+  for (const entry of payload) {
+    if (entry.dataKey && typeof entry.value === "number") {
+      valueMap.set(String(entry.dataKey), entry.value);
+    }
   }
 
-  // Build recharts rows: one object per bucket
-  const rows: Record<string, string | number>[] = buckets.map((bucket, i) => {
-    const row: Record<string, string | number> = { bucket };
-    for (const s of visibleSeries) {
-      row[s.name] = s.points[i] ?? 0;
-    }
-    return row;
-  });
+  const formatter = isCost ? formatCost : formatTokensExact;
 
-  return {
-    rows,
-    visibleSeriesNames: visibleSeries.map((s) => s.name),
-    otrosCount,
-  };
+  return (
+    <div
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-md)",
+        padding: "var(--space-xs) var(--space-sm)",
+        fontSize: 12,
+        minWidth: 180,
+        boxShadow: "var(--shadow-md)",
+      }}
+    >
+      <div
+        style={{
+          fontWeight: 600,
+          marginBottom: "var(--space-2xs)",
+          color: "var(--text)",
+          borderBottom: "1px solid var(--border)",
+          paddingBottom: "var(--space-2xs)",
+        }}
+      >
+        {label}
+        <span
+          style={{
+            float: "right",
+            fontWeight: 500,
+            color: "var(--text-muted)",
+          }}
+        >
+          Total: {formatter(bucketTotal)}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        {orderedNames.map((name) => {
+          const value = valueMap.get(name) ?? 0;
+          const color = colorMap.get(name) ?? "#888";
+          return (
+            <div
+              key={name}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: color,
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  flex: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  color: "var(--text-muted)",
+                }}
+              >
+                {name}
+              </span>
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--text)",
+                  marginLeft: "var(--space-xs)",
+                  flexShrink: 0,
+                }}
+              >
+                {formatter(value)}
+              </span>
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--text-subtle)",
+                  fontSize: 11,
+                  flexShrink: 0,
+                  minWidth: 44,
+                  textAlign: "right",
+                }}
+              >
+                {formatPercent(value, bucketTotal)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
+
+// ── Custom Legend ────────────────────────────────────────────────────────────
+
+interface CustomLegendProps {
+  orderedNames: string[];
+  colorMap: Map<string, string>;
+  hoveredSeries?: string | null;
+  onHoverSeries?: (name: string | null) => void;
+}
+
+function CustomLegend({
+  orderedNames,
+  colorMap,
+  hoveredSeries,
+  onHoverSeries,
+}: CustomLegendProps) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "var(--space-xs)",
+        paddingTop: "var(--space-xs)",
+      }}
+    >
+      {orderedNames.map((name) => {
+        const color = colorMap.get(name) ?? "#888";
+        const isHovered = hoveredSeries === name;
+        const isDimmed = hoveredSeries !== null && !isHovered;
+        return (
+          <div
+            key={name}
+            onMouseEnter={() => onHoverSeries?.(name)}
+            onMouseLeave={() => onHoverSeries?.(null)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              opacity: isDimmed ? 0.35 : 1,
+              transition: `opacity var(--duration-short)`,
+              cursor: "default",
+            }}
+          >
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: color,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              {name}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── UsageChart ───────────────────────────────────────────────────────────────
 
 interface UsageChartProps {
   response: SeriesResponse;
+  colorMap?: Map<string, string>;
+  orderedNames?: string[];
+  hoveredSeries?: string | null;
+  onHoverSeries?: (name: string | null) => void;
+  /** Active bucket granularity — used to format X axis labels. */
+  activeBucket?: Bucket;
 }
 
 /**
- * Recharts line chart that renders one line per series from a SeriesResponse.
- * Applies top-N grouping and shows how many series were grouped into "Otros".
+ * Recharts stacked area chart that renders one area per series from a SeriesResponse.
+ * All series are shown individually (no "Otros" grouping).
+ * Series are stacked so the total height at each bucket equals the sum of all series.
  */
-export function UsageChart({ response }: UsageChartProps) {
+export function UsageChart({
+  response,
+  colorMap: colorMapProp,
+  orderedNames: orderedNamesProp,
+  hoveredSeries,
+  onHoverSeries,
+  activeBucket,
+}: UsageChartProps) {
   const isCost = response.metric === "cost";
+  // Prefer activeBucket prop; fall back to what the response reports
+  const bucket: Bucket = activeBucket ?? response.bucket;
   const isEmpty =
     response.buckets.length === 0 ||
     response.series.every((s) => s.points.every((p) => p === 0));
@@ -94,7 +279,7 @@ export function UsageChart({ response }: UsageChartProps) {
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          height: 240,
+          height: 360,
           gap: 8,
           color: "var(--text-muted)",
         }}
@@ -108,10 +293,28 @@ export function UsageChart({ response }: UsageChartProps) {
     );
   }
 
-  const { rows, visibleSeriesNames, otrosCount } =
-    processSeriesResponse(response);
+  // Compute ordered names + color map either from props or internally
+  const sorted = orderSeries(response);
+  const orderedNames = orderedNamesProp ?? sorted.map((s) => s.name);
+  const colorMap = colorMapProp ?? buildColorMap(orderedNames);
 
-  const formatter = isCost ? formatCost : formatTokens;
+  // Build recharts rows: one object per bucket
+  const rows: Record<string, string | number>[] = response.buckets.map(
+    (bucket, i) => {
+      const row: Record<string, string | number> = { bucket };
+      for (const s of sorted) {
+        row[s.name] = s.points[i] ?? 0;
+      }
+      return row;
+    },
+  );
+
+  // Per-bucket totals (for tooltip percentage)
+  const bucketTotals = response.buckets.map((_, i) =>
+    sorted.reduce((acc, s) => acc + (s.points[i] ?? 0), 0),
+  );
+
+  const axisFormatter = isCost ? formatCost : formatTokens;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -129,21 +332,9 @@ export function UsageChart({ response }: UsageChartProps) {
           valores reales pueden variar.
         </p>
       )}
-      {otrosCount > 0 && (
-        <p
-          style={{
-            margin: 0,
-            fontSize: 11,
-            color: "var(--text-muted)",
-          }}
-        >
-          Mostrando las top {TOP_N} series. {otrosCount} serie
-          {otrosCount !== 1 ? "s" : ""} agrupada{otrosCount !== 1 ? "s" : ""}{" "}
-          en &ldquo;{OTROS_LABEL}&rdquo;.
-        </p>
-      )}
-      <ResponsiveContainer width="100%" height={240}>
-        <LineChart
+
+      <ResponsiveContainer width="100%" height={360}>
+        <AreaChart
           data={rows}
           margin={{ top: 4, right: 16, bottom: 0, left: 0 }}
         >
@@ -152,41 +343,62 @@ export function UsageChart({ response }: UsageChartProps) {
             dataKey="bucket"
             tick={{ fontSize: 11, fill: "var(--text-muted)" }}
             tickLine={false}
+            tickFormatter={(label: string, index: number) =>
+              formatXAxisTick(label, bucket, index)
+            }
+            interval={computeTickInterval(response.buckets.length, bucket)}
           />
           <YAxis
-            tickFormatter={formatter}
+            tickFormatter={axisFormatter}
             tick={{ fontSize: 11, fill: "var(--text-muted)" }}
             tickLine={false}
             axisLine={false}
             width={60}
           />
           <Tooltip
-            formatter={(value: number) => [formatter(value)]}
-            contentStyle={{
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius-md)",
-              fontSize: 12,
-            }}
+            content={
+              <CustomTooltip
+                isCost={isCost}
+                orderedNames={orderedNames}
+                colorMap={colorMap}
+                bucketTotals={bucketTotals}
+                buckets={response.buckets}
+              />
+            }
           />
-          <Legend
-            wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-            iconType="plainline"
-          />
-          {visibleSeriesNames.map((name) => (
-            <Line
-              key={name}
-              type="monotone"
-              dataKey={name}
-              stroke={colorForSeries(name)}
-              strokeWidth={name === OTROS_LABEL ? 1.5 : 2}
-              strokeDasharray={name === OTROS_LABEL ? "4 2" : undefined}
-              dot={false}
-              activeDot={{ r: 4 }}
-            />
-          ))}
-        </LineChart>
+          {/* Render areas in reverse order so largest is at the bottom (base) */}
+          {[...orderedNames].reverse().map((name) => {
+            const color = colorMap.get(name) ?? "#888";
+            const isHovered = hoveredSeries === name;
+            const isDimmed =
+              hoveredSeries !== null && hoveredSeries !== undefined && !isHovered;
+            return (
+              <Area
+                key={name}
+                type="monotone"
+                dataKey={name}
+                stackId="usage"
+                stroke={color}
+                strokeWidth={1.5}
+                fill={color}
+                fillOpacity={isDimmed ? 0.1 : 0.75}
+                strokeOpacity={isDimmed ? 0.2 : 1}
+                dot={false}
+                activeDot={{ r: 3 }}
+                onMouseEnter={() => onHoverSeries?.(name)}
+                onMouseLeave={() => onHoverSeries?.(null)}
+              />
+            );
+          })}
+        </AreaChart>
       </ResponsiveContainer>
+
+      <CustomLegend
+        orderedNames={orderedNames}
+        colorMap={colorMap}
+        hoveredSeries={hoveredSeries}
+        onHoverSeries={onHoverSeries}
+      />
     </div>
   );
 }

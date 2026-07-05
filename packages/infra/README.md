@@ -6,11 +6,11 @@ AWS CDK infrastructure for the TokenWatch project.
 
 | Stack | Description |
 |---|---|
-| `TokenWatchDnsStack` | Imports the existing Route53 hosted zone (does not create one) and owns the wildcard ACM certificate (`tokenwatch.app` + `*.tokenwatch.app`). Exports zone/cert/releases-url via SSM. |
+| `TokenWatchDnsStack` | Imports the existing Route53 hosted zone (does not create one) and owns the wildcard ACM certificate (`tokenwatch.gulloa.click` + `*.tokenwatch.gulloa.click`). Exports zone/cert/releases-url via SSM. |
 | `TokenWatchAnalyticsStack` | Shared CloudFront access-log S3 bucket, Glue database + tables, Athena workgroup and named queries. |
-| `TokenWatchReleasesStack` | S3 artifact bucket + CloudFront distribution (`releases.tokenwatch.app`) for binary releases. GitHub OIDC publish role. |
-| `TokenWatchLandingStack` | Vite SPA (landing page) served via CloudFront (`tokenwatch.app` + `www`) from a private S3 bucket. |
-| `TokenWatchFeedbackStack` | HTTP API (API Gateway v2) on `feedback.tokenwatch.app` + Lambda intake + DynamoDB + S3 attachments bucket for in-app feedback. |
+| `TokenWatchReleasesStack` | S3 artifact bucket + CloudFront distribution (`releases.tokenwatch.gulloa.click`) for binary releases. GitHub OIDC publish role. |
+| `TokenWatchLandingStack` | Vite SPA (landing page) served via CloudFront (`tokenwatch.gulloa.click` + `www`) from a private S3 bucket. |
+| `TokenWatchFeedbackStack` | HTTP API (API Gateway v2) on `feedback.tokenwatch.gulloa.click` + Lambda intake + DynamoDB + S3 attachments bucket for in-app feedback. |
 
 ## DnsStack / custom domain
 
@@ -19,7 +19,7 @@ deploying:
 
 1. Register the domain and create its Route53 hosted zone.
 2. Set `HOSTED_ZONE_ID` in `constants.ts` to the real zone id (it currently ships
-   with a `ZXXXXXXXXXXXXX` placeholder). `DOMAIN_NAME` is `tokenwatch.app`.
+   with a `ZXXXXXXXXXXXXX` placeholder). `DOMAIN_NAME` is `tokenwatch.gulloa.click`.
 
 `ReleasesStack`, `LandingStack` and `FeedbackStack` read the zone + certificate
 from `DnsStack` via SSM and add their `domainNames`/`certificate` and Route53

@@ -40,8 +40,13 @@ many tokens your AI coding sessions are burning:
 
 Tag pushes (`v*`) trigger `.github/workflows/release.yml`: build + sign +
 notarize on macOS/Windows/Linux, then publish artifacts and updater manifests
-to S3 + CloudFront (`releases.tokenwatch.app`). Release notes come from
-`CHANGELOG.md`.
+to S3 + CloudFront (`releases.tokenwatch.gulloa.click`). Release notes come from
+`CHANGELOG.md`, whose `## [Unreleased]` section is generated automatically from
+Conventional Commits by `scripts/generate-changelog.mjs` (run during
+`scripts/release.sh`, before the version bump promotes it to a dated section).
+The app shows these notes in a **What's New** dialog the first time it runs a new
+version, and exposes the current version + an update action in its "Acerca de"
+surface.
 
 ## Infrastructure
 
