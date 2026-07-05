@@ -8,10 +8,43 @@ import {
   Tooltip,
 } from "recharts";
 import type { TooltipProps } from "recharts";
-import type { SeriesResponse } from "./types";
+import type { Bucket, SeriesResponse } from "./types";
 import { buildColorMap } from "./colors";
 import { formatTokens, formatCost, formatTokensExact, formatPercent } from "./format";
 import { orderSeries } from "./seriesUtils";
+
+// ── X-axis tick formatters ────────────────────────────────────────────────────
+
+/**
+ * Format a bucket label for the X axis.
+ *
+ * For "hour" buckets the backend returns labels like "2026-07-04 14:00"
+ * (already in local time). We display just the time part ("14:00"), but also
+ * include the date on the first bucket of a new day to aid readability.
+ *
+ * For all other granularities the label is returned as-is.
+ */
+function formatXAxisTick(label: string, bucket: Bucket, _index: number): string {
+  if (bucket !== "hour") return label;
+
+  // Expected format: "YYYY-MM-DD HH:00"
+  const spaceIdx = label.indexOf(" ");
+  if (spaceIdx === -1) return label;
+
+  const timePart = label.slice(spaceIdx + 1); // "HH:00"
+  return timePart;
+}
+
+/**
+ * Compute interval for XAxis ticks so hourly charts don't crowd.
+ * For ≤24 ticks show all; for ≤48 show every 2nd; otherwise every 4th.
+ */
+function computeTickInterval(bucketCount: number, bucket: Bucket): number {
+  if (bucket !== "hour") return 0; // Recharts default (show all)
+  if (bucketCount <= 24) return 0;
+  if (bucketCount <= 48) return 1;
+  return 3;
+}
 
 // ── Custom Tooltip ───────────────────────────────────────────────────────────
 
@@ -212,6 +245,8 @@ interface UsageChartProps {
   orderedNames?: string[];
   hoveredSeries?: string | null;
   onHoverSeries?: (name: string | null) => void;
+  /** Active bucket granularity — used to format X axis labels. */
+  activeBucket?: Bucket;
 }
 
 /**
@@ -225,8 +260,11 @@ export function UsageChart({
   orderedNames: orderedNamesProp,
   hoveredSeries,
   onHoverSeries,
+  activeBucket,
 }: UsageChartProps) {
   const isCost = response.metric === "cost";
+  // Prefer activeBucket prop; fall back to what the response reports
+  const bucket: Bucket = activeBucket ?? response.bucket;
   const isEmpty =
     response.buckets.length === 0 ||
     response.series.every((s) => s.points.every((p) => p === 0));
@@ -305,6 +343,10 @@ export function UsageChart({
             dataKey="bucket"
             tick={{ fontSize: 11, fill: "var(--text-muted)" }}
             tickLine={false}
+            tickFormatter={(label: string, index: number) =>
+              formatXAxisTick(label, bucket, index)
+            }
+            interval={computeTickInterval(response.buckets.length, bucket)}
           />
           <YAxis
             tickFormatter={axisFormatter}

@@ -31,6 +31,7 @@ pub const USAGE_UPDATED_EVENT: &str = "usage-updated";
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Bucket {
+    Hour,
     Day,
     Week,
     Month,
@@ -60,9 +61,9 @@ pub struct SeriesQuery {
     pub bucket: Bucket,
     pub metric: Metric,
     pub series_by: SeriesBy,
-    /// Inclusive lower bound (ISO 8601 date string, e.g. `"2026-06-01"`).
+    /// Inclusive lower bound (ISO 8601 UTC datetime, e.g. `"2026-07-04T00:00:00Z"`).
     pub since: Option<String>,
-    /// Inclusive upper bound (ISO 8601 date string, e.g. `"2026-07-03"`).
+    /// Inclusive upper bound (ISO 8601 UTC datetime, e.g. `"2026-07-04T23:59:59Z"`).
     pub until: Option<String>,
 }
 
@@ -262,6 +263,7 @@ pub fn query_today_by_project(state: State<'_, AppState>) -> Result<TodayByProje
 fn query_series_inner(conn: &Connection, params: &SeriesQuery) -> anyhow::Result<SeriesResponse> {
     // Build the strftime format string and label formatter for each bucket type.
     let (strftime_fmt, _label_hint) = match params.bucket {
+        Bucket::Hour => ("%Y-%m-%d %H:00", "hour"),
         Bucket::Day => ("%Y-%m-%d", "day"),
         Bucket::Week => ("%Y-W%W", "week"),
         Bucket::Month => ("%Y-%m", "month"),
@@ -281,12 +283,13 @@ fn query_series_inner(conn: &Connection, params: &SeriesQuery) -> anyhow::Result
     };
 
     // Build optional date filters.
+    // `since` and `until` are full ISO 8601 UTC datetimes computed by the frontend (D2).
     let mut conditions = Vec::new();
     if let Some(since) = &params.since {
-        conditions.push(format!("timestamp >= '{since}T00:00:00Z'"));
+        conditions.push(format!("timestamp >= '{since}'"));
     }
     if let Some(until) = &params.until {
-        conditions.push(format!("timestamp <= '{until}T23:59:59Z'"));
+        conditions.push(format!("timestamp <= '{until}'"));
     }
     let where_clause = if conditions.is_empty() {
         String::new()
@@ -295,8 +298,10 @@ fn query_series_inner(conn: &Connection, params: &SeriesQuery) -> anyhow::Result
     };
 
     // Query raw (bucket_label, series_name, value) rows.
+    // The 'localtime' modifier converts UTC timestamps to the host's local time zone
+    // before bucketing, so grouping reflects the user's local day/hour (D1).
     let sql = format!(
-        "SELECT strftime('{strftime_fmt}', timestamp) AS bucket_label,
+        "SELECT strftime('{strftime_fmt}', timestamp, 'localtime') AS bucket_label,
                 {series_col} AS series_name,
                 {metric_expr} AS value
          FROM usage_events
@@ -676,12 +681,13 @@ mod tests {
         let conn = test_conn();
         seed_events(&conn);
 
+        // since/until are now full ISO 8601 UTC datetimes (D2).
         let params = SeriesQuery {
             bucket: Bucket::Day,
             metric: Metric::Tokens,
             series_by: SeriesBy::Model,
-            since: Some("2026-06-01".to_owned()),
-            until: Some("2026-06-02".to_owned()),
+            since: Some("2026-06-01T00:00:00Z".to_owned()),
+            until: Some("2026-06-02T23:59:59Z".to_owned()),
         };
 
         let resp = query_series_inner(&conn, &params).unwrap();
@@ -751,5 +757,174 @@ mod tests {
         let opus = &resp.series[0];
         assert!((opus.points[0] - 110.0).abs() < 1.0);
         assert!((opus.points[1] - 220.0).abs() < 1.0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 1.4(a): Bucket::Hour returns per-hour bucket labels
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_query_series_hour_bucket_labels() {
+        let conn = test_conn();
+
+        // Insert two events in the same UTC day but different hours.
+        let rows = vec![
+            UsageEventRow {
+                dedup_key: "h1:r1",
+                session_id: "s",
+                project_path: "/p",
+                project_name: "p",
+                model: "claude-opus-4-8",
+                input_tokens: 100,
+                output_tokens: 10,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 110,
+                cost: 0.001,
+                timestamp: "2026-07-04T10:00:00Z",
+                git_branch: None,
+                ingested_at: "2026-07-04T10:01:00Z",
+            },
+            UsageEventRow {
+                dedup_key: "h2:r2",
+                session_id: "s",
+                project_path: "/p",
+                project_name: "p",
+                model: "claude-opus-4-8",
+                input_tokens: 200,
+                output_tokens: 20,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 220,
+                cost: 0.002,
+                timestamp: "2026-07-04T11:00:00Z",
+                git_branch: None,
+                ingested_at: "2026-07-04T11:01:00Z",
+            },
+        ];
+        for r in &rows {
+            db::insert_event(&conn, r).unwrap();
+        }
+
+        let params = SeriesQuery {
+            bucket: Bucket::Hour,
+            metric: Metric::Tokens,
+            series_by: SeriesBy::Model,
+            since: None,
+            until: None,
+        };
+
+        let resp = query_series_inner(&conn, &params).unwrap();
+
+        // Each event falls in a different UTC hour, so even after 'localtime'
+        // conversion they must produce exactly 2 distinct hour buckets.
+        assert_eq!(resp.buckets.len(), 2, "expected 2 hour buckets");
+
+        // Bucket labels must match the 'YYYY-MM-DD HH:00' format.
+        for label in &resp.buckets {
+            assert!(
+                label.len() == 16 && label.contains(':'),
+                "bucket label '{label}' does not match expected hour format 'YYYY-MM-DD HH:00'"
+            );
+        }
+
+        // The two bucket labels should agree with what SQLite's strftime+localtime
+        // returns for those exact timestamps — derive expected labels the same way.
+        let expected_labels: Vec<String> = conn
+            .prepare(
+                "SELECT strftime('%Y-%m-%d %H:00', '2026-07-04T10:00:00Z', 'localtime')
+                 UNION ALL
+                 SELECT strftime('%Y-%m-%d %H:00', '2026-07-04T11:00:00Z', 'localtime')
+                 ORDER BY 1",
+            )
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        assert_eq!(
+            resp.buckets, expected_labels,
+            "hour bucket labels must match SQLite strftime+localtime output"
+        );
+
+        // All tokens are under one model, so the single series must have 2 points.
+        assert_eq!(resp.series.len(), 1);
+        let opus = &resp.series[0];
+        assert_eq!(opus.points.len(), 2);
+        let total: f64 = opus.points.iter().sum();
+        assert!((total - 330.0).abs() < 1.0, "total tokens should be 330");
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 1.4(b): datetime since/until filters include only events in range
+    // (last-24h style — insert one event "now" and one 25h ago, filter since
+    //  now-24h, assert only the recent event is counted)
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_query_series_datetime_filter_last_24h() {
+        let conn = test_conn();
+
+        // Use fixed timestamps so the test is deterministic.
+        // "recent"  : 2026-07-04T12:00:00Z  — inside  the last-24h window
+        // "old"     : 2026-07-03T11:00:00Z  — 25 hours before the "now" anchor
+        // Filter    : since=2026-07-03T12:00:00Z  until=2026-07-04T12:00:00Z
+        let recent_ts = "2026-07-04T12:00:00Z";
+        let old_ts = "2026-07-03T11:00:00Z";
+
+        let rows = vec![
+            UsageEventRow {
+                dedup_key: "dt1:r1",
+                session_id: "s",
+                project_path: "/p",
+                project_name: "p",
+                model: "claude-opus-4-8",
+                input_tokens: 100,
+                output_tokens: 10,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 110,
+                cost: 0.001,
+                timestamp: recent_ts,
+                git_branch: None,
+                ingested_at: "2026-07-04T12:01:00Z",
+            },
+            UsageEventRow {
+                dedup_key: "dt2:r2",
+                session_id: "s",
+                project_path: "/p",
+                project_name: "p",
+                model: "claude-opus-4-8",
+                input_tokens: 999,
+                output_tokens: 99,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 1098,
+                cost: 0.009,
+                timestamp: old_ts,
+                git_branch: None,
+                ingested_at: "2026-07-03T11:01:00Z",
+            },
+        ];
+        for r in &rows {
+            db::insert_event(&conn, r).unwrap();
+        }
+
+        // Query the last 24h with full datetime precision (D2 contract).
+        let params = SeriesQuery {
+            bucket: Bucket::Hour,
+            metric: Metric::Tokens,
+            series_by: SeriesBy::Model,
+            since: Some("2026-07-03T12:00:00Z".to_owned()),
+            until: Some("2026-07-04T12:00:00Z".to_owned()),
+        };
+
+        let resp = query_series_inner(&conn, &params).unwrap();
+
+        // Only the recent event (110 tokens) should be included.
+        let total_tokens: f64 = resp.series.iter().flat_map(|s| s.points.iter()).sum();
+        assert!(
+            (total_tokens - 110.0).abs() < 1.0,
+            "expected only the recent event (110 tokens) to be included; got {total_tokens}"
+        );
     }
 }

@@ -1,5 +1,17 @@
-import type { SeriesResponse } from "./types";
+import type { Bucket, SeriesResponse } from "./types";
 import { formatTokensExact, formatCost } from "./format";
+
+/**
+ * Format a bucket label for a table column header.
+ * For "hour" buckets the backend returns "YYYY-MM-DD HH:00" (local time).
+ * We show just the time part ("HH:00") to keep columns narrow.
+ */
+function formatBucketHeader(label: string, bucket: Bucket): string {
+  if (bucket !== "hour") return label;
+  const spaceIdx = label.indexOf(" ");
+  if (spaceIdx === -1) return label;
+  return label.slice(spaceIdx + 1); // "HH:00"
+}
 
 interface UsageTableProps {
   response: SeriesResponse;
@@ -7,6 +19,8 @@ interface UsageTableProps {
   colorMap: Map<string, string>;
   hoveredSeries?: string | null;
   onHoverSeries?: (name: string | null) => void;
+  /** Active bucket granularity — used to format column headers. */
+  activeBucket?: Bucket;
 }
 
 /**
@@ -20,8 +34,11 @@ export function UsageTable({
   colorMap,
   hoveredSeries,
   onHoverSeries,
+  activeBucket,
 }: UsageTableProps) {
   const { buckets, series, metric } = response;
+  // Prefer activeBucket prop; fall back to what the response reports
+  const bucket: Bucket = activeBucket ?? response.bucket;
   const isCost = metric === "cost";
   const formatter = isCost ? formatCost : formatTokensExact;
 
@@ -56,7 +73,7 @@ export function UsageTable({
             <th className="usage-table__series-cell">Serie</th>
             {buckets.map((b) => (
               <th key={b} className="usage-table__num-cell">
-                {b}
+                {formatBucketHeader(b, bucket)}
               </th>
             ))}
             <th className="usage-table__num-cell usage-table__total-cell">

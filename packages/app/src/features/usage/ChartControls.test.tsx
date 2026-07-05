@@ -7,6 +7,7 @@ const DEFAULT_VALUE: ChartControlsValue = {
   bucket: "day",
   metric: "tokens",
   seriesBy: "model",
+  dateFilter: { preset: "all" },
 };
 
 describe("ChartControls", () => {
