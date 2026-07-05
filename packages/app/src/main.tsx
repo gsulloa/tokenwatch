@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import { App } from "@/app/App";
 import { Popover } from "@/app/Popover";
 import { APP_DISPLAY_NAME } from "@/platform/app-identity";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import "@/styles/global.css";
 
 document.title = APP_DISPLAY_NAME;

@@ -395,7 +395,7 @@ describe("GroupBudgetsSection", () => {
     const readout = screen.getByText("$2.50 / $2.00");
     expect(readout).toBeInTheDocument();
     // The readout span should have danger color style (over cap)
-    expect(readout).toHaveStyle({ color: "var(--danger)" });
+    expect(readout).toHaveStyle({ color: "var(--gauge-danger)" });
   });
 
   it("shows % sesión readout in red when over share cap in session mode", () => {
@@ -423,6 +423,6 @@ describe("GroupBudgetsSection", () => {
     const readout = screen.getByText(/32% \/ 30% sesión \(est\.\)/);
     expect(readout).toBeInTheDocument();
     // Over cap: danger color
-    expect(readout).toHaveStyle({ color: "var(--danger)" });
+    expect(readout).toHaveStyle({ color: "var(--gauge-danger)" });
   });
 });
