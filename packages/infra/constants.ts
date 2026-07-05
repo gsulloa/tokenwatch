@@ -5,8 +5,8 @@ export const PROJECT_NAME = "TokenWatch";
 // owns the wildcard ACM certificate. Before deploying:
 //   1. Register the domain and create its hosted zone in Route53.
 //   2. Set HOSTED_ZONE_ID below to the real zone id (currently a placeholder).
-export const DOMAIN_NAME = "tokenwatch.app";
-export const HOSTED_ZONE_ID = "ZXXXXXXXXXXXXX"; // TODO: replace with the real Route53 hosted zone id.
+export const DOMAIN_NAME = "tokenwatch.gulloa.click";
+export const HOSTED_ZONE_ID = "Z02980033T4KKO41XQM55";
 export const RELEASES_SUBDOMAIN = `releases.${DOMAIN_NAME}`;
 export const RELEASES_PUBLIC_URL = `https://${RELEASES_SUBDOMAIN}`;
 
