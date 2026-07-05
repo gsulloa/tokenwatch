@@ -1,3 +1,5 @@
+const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+
 /**
  * Compute "resets in Xh Ym" from a future ISO 8601 timestamp.
  * Returns a short human-readable string.
@@ -29,11 +31,31 @@ function formatTimeUntilReset(resetsAt: string): string {
 function formatResetClock(resetsAt: string): string {
   if (!resetsAt) return "";
   try {
-    return new Date(resetsAt).toLocaleTimeString([], {
+    return new Date(resetsAt).toLocaleTimeString("es", {
       hour: "2-digit",
       minute: "2-digit",
       timeZoneName: "short",
     });
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Format the reset moment as a closing date in Spanish,
+ * e.g. "cierra el sáb 12 jul".
+ */
+function formatResetDate(resetsAt: string): string {
+  if (!resetsAt) return "";
+  try {
+    return (
+      "cierra el " +
+      new Date(resetsAt).toLocaleDateString("es", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      })
+    );
   } catch {
     return "";
   }
@@ -69,9 +91,13 @@ export function LimitGauge({
   compact = false,
 }: LimitGaugeProps) {
   const clampedPct = Math.min(100, Math.max(0, utilization));
-  const timeLabel = formatTimeUntilReset(resetsAt);
-  const clockLabel = formatResetClock(resetsAt);
-  const resetLabel = [timeLabel, clockLabel].filter(Boolean).join(" · ");
+  const diffMs = resetsAt ? new Date(resetsAt).getTime() - Date.now() : NaN;
+  const resetLabel =
+    resetsAt && !isNaN(diffMs) && diffMs >= TWELVE_HOURS_MS
+      ? formatResetDate(resetsAt)
+      : [formatTimeUntilReset(resetsAt), formatResetClock(resetsAt)]
+          .filter(Boolean)
+          .join(" · ");
   const color = barColor(clampedPct);
 
   const trackHeight = compact ? 4 : 6;
@@ -143,7 +169,7 @@ export function LimitGauge({
         />
       </div>
 
-      {/* Reset time: "resetea en Xh Ym · 20:00 GMT-4" */}
+      {/* Reset label: "resetea en Xh Ym · 20:00 GMT-4" when < 12 h remain; "cierra el sáb 12 jul" otherwise */}
       {resetLabel && (
         <span
           style={{
