@@ -7,12 +7,19 @@ import { useUsageSeries } from "@/features/usage/useUsageSeries";
 import { buildColorMap } from "@/features/usage/colors";
 import { orderSeries } from "@/features/usage/seriesUtils";
 import { formatTokens, formatTokensExact, formatCost } from "@/features/usage/format";
+import { resolvePreset, resolveCustomRange, effectiveBucket } from "@/features/usage/dateRange";
 import type { ChartControlsValue } from "@/features/usage/ChartControls";
+import type { DateRangeFilter } from "@/features/usage/types";
+
+const DEFAULT_DATE_FILTER: DateRangeFilter = {
+  preset: "all",
+};
 
 const DEFAULT_CONTROLS: ChartControlsValue = {
-  bucket: "day",
+  bucket: "week",
   metric: "tokens",
   seriesBy: "model",
+  dateFilter: DEFAULT_DATE_FILTER,
 };
 
 function formatRefreshAt(iso: string | null | undefined): string {
@@ -31,6 +38,7 @@ const SERIES_BY_LABELS: Record<ChartControlsValue["seriesBy"], string> = {
 };
 
 const BUCKET_LABELS: Record<ChartControlsValue["bucket"], string> = {
+  hour: "Horas",
   day: "Días",
   week: "Semanas",
   month: "Meses",
@@ -69,10 +77,86 @@ export function App() {
 
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null);
 
+  // Resolve the active date range and effective bucket.
+  // IMPORTANT: relative presets are computed with a fresh `new Date()` on each
+  // render/query cycle so "last 24h" stays current across polling intervals.
+  const { resolvedSince, resolvedUntil, resolvedBucket } = useMemo(() => {
+    const now = new Date();
+    const { preset, customStart, customEnd } = controls.dateFilter;
+
+    let since: string | undefined;
+    let until: string | undefined;
+
+    if (preset === "custom") {
+      if (customStart && customEnd) {
+        const resolved = resolveCustomRange(customStart, customEnd, null, null);
+        since = resolved.since;
+        until = resolved.until;
+      }
+      // If custom but no dates chosen yet, fall through to undefined (all)
+    } else {
+      const resolved = resolvePreset(preset, now);
+      since = resolved.since;
+      until = resolved.until;
+    }
+
+    const resolvedBucket = effectiveBucket(controls.bucket, since, until);
+
+    return { resolvedSince: since, resolvedUntil: until, resolvedBucket };
+  }, [controls.dateFilter, controls.bucket]);
+
+  // Handle controls changes: when preset changes, set the defaultBucket
+  // (unless user has explicitly overridden it after the preset).
+  function handleControlsChange(next: ChartControlsValue) {
+    const presetChanged = next.dateFilter.preset !== controls.dateFilter.preset;
+
+    if (presetChanged) {
+      const now = new Date();
+      const preset = next.dateFilter.preset;
+      if (preset !== "custom") {
+        const { defaultBucket } = resolvePreset(preset, now);
+        // Compute since/until for the new preset to check guardrail
+        const { since, until } = resolvePreset(preset, now);
+        const safeBucket = effectiveBucket(defaultBucket, since, until);
+        setControls({ ...next, bucket: safeBucket });
+        return;
+      }
+    }
+
+    // If the bucket was "hour" and the new range no longer allows it, degrade
+    if (next.bucket === "hour") {
+      const now = new Date();
+      const preset = next.dateFilter.preset;
+      let since: string | undefined;
+      let until: string | undefined;
+      if (preset !== "custom") {
+        const resolved = resolvePreset(preset, now);
+        since = resolved.since;
+        until = resolved.until;
+      } else if (next.dateFilter.customStart && next.dateFilter.customEnd) {
+        const resolved = resolveCustomRange(
+          next.dateFilter.customStart,
+          next.dateFilter.customEnd,
+          null,
+          null,
+        );
+        since = resolved.since;
+        until = resolved.until;
+      }
+      const safeBucket = effectiveBucket("hour", since, until);
+      setControls({ ...next, bucket: safeBucket });
+      return;
+    }
+
+    setControls(next);
+  }
+
   const { data, meta, loading, error, refresh } = useUsageSeries({
-    bucket: controls.bucket,
+    bucket: resolvedBucket,
     metric: controls.metric,
     seriesBy: controls.seriesBy,
+    since: resolvedSince,
+    until: resolvedUntil,
   });
 
   // Compute the ordered names and color map ONCE at App level so chart + table
@@ -119,14 +203,30 @@ export function App() {
   const kpiSeriesSub = SERIES_BY_LABELS[controls.seriesBy];
 
   const kpiBucketCount = data?.buckets.length ?? 0;
-  const kpiBucketSub = BUCKET_LABELS[controls.bucket];
+  const kpiBucketSub = BUCKET_LABELS[resolvedBucket];
 
   const kpiEventCount = meta?.eventCount ?? 0;
 
-  const kpiDateMin = meta?.earliestDate ?? null;
-  const kpiDateMax = meta?.latestDate ?? null;
-  const kpiDateRange =
-    kpiDateMin && kpiDateMax ? `${kpiDateMin} – ${kpiDateMax}` : "—";
+  // Show the FILTERED date range (resolved since/until) rather than full history.
+  // Fall back to the full meta range when no filter is applied ("all" preset).
+  const kpiDateRange = useMemo(() => {
+    if (resolvedSince || resolvedUntil) {
+      const formatPart = (iso: string) => {
+        try {
+          return new Date(iso).toLocaleDateString();
+        } catch {
+          return iso;
+        }
+      };
+      const start = resolvedSince ? formatPart(resolvedSince) : "…";
+      const end = resolvedUntil ? formatPart(resolvedUntil) : "…";
+      return `${start} – ${end}`;
+    }
+    // "all" preset: show full meta range
+    const min = meta?.earliestDate ?? null;
+    const max = meta?.latestDate ?? null;
+    return min && max ? `${min} – ${max}` : "—";
+  }, [resolvedSince, resolvedUntil, meta?.earliestDate, meta?.latestDate]);
 
   return (
     <div className="dashboard">
@@ -194,7 +294,14 @@ export function App() {
 
         {/* ── Controls Toolbar ────────────────────────────────────────────── */}
         <div className="toolbar">
-          <ChartControls value={controls} onChange={setControls} />
+          <ChartControls
+            value={controls}
+            onChange={handleControlsChange}
+            earliestDate={meta?.earliestDate}
+            latestDate={meta?.latestDate}
+            resolvedSince={resolvedSince}
+            resolvedUntil={resolvedUntil}
+          />
         </div>
 
         {/* ── Chart Panel ─────────────────────────────────────────────────── */}
@@ -210,6 +317,7 @@ export function App() {
                 orderedNames={orderedNames}
                 hoveredSeries={hoveredSeries}
                 onHoverSeries={setHoveredSeries}
+                activeBucket={resolvedBucket}
               />
             ) : !loading ? (
               <div
@@ -248,6 +356,7 @@ export function App() {
                 colorMap={colorMap}
                 hoveredSeries={hoveredSeries}
                 onHoverSeries={setHoveredSeries}
+                activeBucket={resolvedBucket}
               />
             </div>
           </div>
