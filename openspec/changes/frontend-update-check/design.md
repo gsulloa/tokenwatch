@@ -1,6 +1,6 @@
 ## Context
 
-TokenWatch es una app menú-bar de Tauri 2 + React. El backend del updater ya está listo: `tauri-plugin-updater` registrado en `src-tauri/src/lib.rs` (`.plugin(UpdaterBuilder::new().build())`), config en `tauri.conf.json` (`plugins.updater.endpoints = ["https://releases.tokenwatch.app/latest.json"]`), y permisos `updater:default` + `process:allow-restart` en `src-tauri/capabilities/default.json`. Las deps JS `@tauri-apps/plugin-updater` y `@tauri-apps/plugin-process` ya están en `package.json`.
+TokenWatch es una app menú-bar de Tauri 2 + React. El backend del updater ya está listo: `tauri-plugin-updater` registrado en `src-tauri/src/lib.rs` (`.plugin(UpdaterBuilder::new().build())`), config en `tauri.conf.json` (`plugins.updater.endpoints = ["https://releases.tokenwatch.gulloa.click/latest.json"]`), y permisos `updater:default` + `process:allow-restart` en `src-tauri/capabilities/default.json`. Las deps JS `@tauri-apps/plugin-updater` y `@tauri-apps/plugin-process` ya están en `package.json`.
 
 Lo único que falta es la capa de frontend: nada en `src/` invoca `check()`. El popover del menú-bar (`src/app/Popover.tsx`) ya usa un patrón `safeTauriInvoke` que degrada limpio en entornos no-Tauri (dev en browser, tests). Ese patrón es la referencia para el guardado de este feature.
 

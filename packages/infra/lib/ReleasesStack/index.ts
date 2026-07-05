@@ -46,8 +46,8 @@ export class ReleasesStack extends cdk.Stack {
     const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(bucket);
 
     // ── CORS for the JSON manifests ────────────────────────────────────────────
-    // The landing page (tokenwatch.app) fetches download.json from this
-    // (releases.tokenwatch.app) origin to render its download CTA. That is a
+    // The landing page (tokenwatch.gulloa.click) fetches download.json from this
+    // (releases.tokenwatch.gulloa.click) origin to render its download CTA. That is a
     // cross-origin request, so the manifest responses need CORS headers.
     const manifestCorsPolicy = new cloudfront.ResponseHeadersPolicy(
       this,

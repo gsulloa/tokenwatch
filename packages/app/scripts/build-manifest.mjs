@@ -5,7 +5,7 @@
 // Inputs (env vars):
 //   VERSION                       e.g. 0.1.7
 //   PUB_DATE                      ISO 8601 timestamp
-//   PUBLIC_URL_BASE               e.g. https://releases.tokenwatch.app
+//   PUBLIC_URL_BASE               e.g. https://releases.tokenwatch.gulloa.click
 //   NOTES                         (optional) release notes string
 //   MANIFEST_MODE                 ci | local (default ci). In ci, all four
 //                                 platforms are required and the script exits

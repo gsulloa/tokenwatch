@@ -1,6 +1,6 @@
 ## Why
 
-El plugin `tauri-plugin-updater` ya está registrado en Rust y configurado en `tauri.conf.json` (endpoint `releases.tokenwatch.app/latest.json`, permisos `updater:default` + `process:allow-restart`), pero **el frontend nunca consulta si hay una versión nueva**. Sin esa pieza, la infraestructura de release está completa pero los usuarios jamás reciben actualizaciones: se quedan pegados en la versión que instalaron.
+El plugin `tauri-plugin-updater` ya está registrado en Rust y configurado en `tauri.conf.json` (endpoint `releases.tokenwatch.gulloa.click/latest.json`, permisos `updater:default` + `process:allow-restart`), pero **el frontend nunca consulta si hay una versión nueva**. Sin esa pieza, la infraestructura de release está completa pero los usuarios jamás reciben actualizaciones: se quedan pegados en la versión que instalaron.
 
 ## What Changes
 

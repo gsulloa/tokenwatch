@@ -218,10 +218,10 @@ describe("TokenWatchReleasesStack", () => {
 
   // ── Custom release domain (from DnsStack) ─────────────────────────────────
 
-  it("distribution declares the releases.tokenwatch.app alias", () => {
+  it("distribution declares the releases.tokenwatch.gulloa.click alias", () => {
     template.hasResourceProperties("AWS::CloudFront::Distribution", {
       DistributionConfig: {
-        Aliases: Match.arrayWith(["releases.tokenwatch.app"]),
+        Aliases: Match.arrayWith(["releases.tokenwatch.gulloa.click"]),
       },
     });
   });
@@ -240,17 +240,17 @@ describe("TokenWatchReleasesStack", () => {
     template.resourceCountIs("AWS::CertificateManager::Certificate", 0);
   });
 
-  it("creates an A alias record for releases.tokenwatch.app", () => {
+  it("creates an A alias record for releases.tokenwatch.gulloa.click", () => {
     template.hasResourceProperties("AWS::Route53::RecordSet", {
       Type: "A",
-      Name: "releases.tokenwatch.app.",
+      Name: "releases.tokenwatch.gulloa.click.",
     });
   });
 
-  it("creates an AAAA alias record for releases.tokenwatch.app", () => {
+  it("creates an AAAA alias record for releases.tokenwatch.gulloa.click", () => {
     template.hasResourceProperties("AWS::Route53::RecordSet", {
       Type: "AAAA",
-      Name: "releases.tokenwatch.app.",
+      Name: "releases.tokenwatch.gulloa.click.",
     });
   });
 });

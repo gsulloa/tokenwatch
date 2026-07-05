@@ -62,7 +62,7 @@ export class FeedbackStack extends cdk.Stack {
     //
     // Regional endpoint — the cert can live in the stack region (no us-east-1
     // dance needed, unlike CloudFront).  DnsStack already provisions a wildcard
-    // cert covering *.tokenwatch.app in us-east-1; for a regional API GW domain we
+    // cert covering *.tokenwatch.gulloa.click in us-east-1; for a regional API GW domain we
     // need the cert in the same region as the stack.  Because the wildcard cert
     // from DnsStack is in us-east-1 and this stack is deployed to the default
     // region we re-use DnsStack.getCertificate() which reads the ARN from SSM.
@@ -126,7 +126,7 @@ export class FeedbackStack extends cdk.Stack {
     //
     // createDefaultStage:true creates the $default stage automatically.
     // We attach the custom domain via defaultDomainMapping so the $default stage
-    // is rooted at feedback.tokenwatch.app/.
+    // is rooted at feedback.tokenwatch.gulloa.click/.
     // Throttling is set on the $default stage via addStage after the fact —
     // HttpApi.createDefaultStage doesn't expose throttle directly, so we disable
     // the auto-stage and create it manually with throttle settings.

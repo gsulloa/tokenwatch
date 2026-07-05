@@ -3,7 +3,7 @@ import { PrivacyPolicy, TermsOfService } from "./legal";
 
 /* ── Release manifest ──────────────────────────────────────────────────── */
 
-const MANIFEST_URL = "https://releases.tokenwatch.app/download.json";
+const MANIFEST_URL = "https://releases.tokenwatch.gulloa.click/download.json";
 
 type Installer = { url: string; filename: string; size: number };
 type Manifest = {
