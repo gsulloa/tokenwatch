@@ -66,6 +66,15 @@ docs: update README prerequisites
 
 PR titles follow the same convention. Scope is optional but encouraged for larger areas (`ai`, `postgres`, `dynamo`, `athena`, `cloudwatch`, `context`, `ui`).
 
+**Commit types drive the changelog.** At release time `scripts/generate-changelog.mjs` reads the commits since the last tag and fills the `## [Unreleased]` section of `CHANGELOG.md` automatically — no manual editing. The mapping is:
+
+- `feat` → **Added**
+- `fix` → **Fixed**
+- `perf`, `refactor` → **Changed**
+- `chore`, `ci`, `docs`, `test`, `build`, `style` → omitted from user-facing notes
+
+So write commit subjects that read well as release notes; anything not matching the convention is left out of the changelog. These same notes flow into the GitHub release, the updater manifest, and the in-app **What's New** dialog.
+
 ## Workflow
 
 1. Fork the repo and create a feature branch off `master`.

@@ -22,6 +22,7 @@
     "format": "prettier --write .",
     "test": "node scripts/sync-changelog.mjs && vitest",
     "test:run": "node scripts/sync-changelog.mjs && vitest run",
+    "changelog": "node scripts/generate-changelog.mjs",
     "release": "bash scripts/release.sh",
     "release:dry": "bash scripts/release.sh --dry-run"
   },
