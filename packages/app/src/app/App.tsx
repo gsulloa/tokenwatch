@@ -1,5 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { APP_DISPLAY_NAME } from "@/platform/app-identity";
+import { useAppVersion } from "@/features/about/useAppVersion";
+import { ChangelogModal } from "@/features/about/ChangelogModal";
+import { onOpenChangelogRequest } from "@/features/about/changelogChannel";
+import changelogRaw from "@/generated/changelog.md?raw";
 import { ChartControls } from "@/features/usage/ChartControls";
 import { UsageChart } from "@/features/usage/UsageChart";
 import { UsageTable } from "@/features/usage/UsageTable";
@@ -75,6 +79,14 @@ function KpiCard({ label, value, sub, title, monoValue }: KpiCardProps) {
 export function App() {
   const [controls, setControls] =
     useState<ChartControlsValue>(DEFAULT_CONTROLS);
+
+  // App version + full changelog. The changelog modal lives in this (large,
+  // resizable) window rather than the small popover; the popover asks us to
+  // open it via the `open-changelog` cross-window event.
+  const { version: appVersion } = useAppVersion();
+  const [showChangelog, setShowChangelog] = useState(false);
+
+  useEffect(() => onOpenChangelogRequest(() => setShowChangelog(true)), []);
 
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null);
 
@@ -241,6 +253,27 @@ export function App() {
             </p>
           </div>
           <div className="dashboard__topbar-actions">
+            <span
+              className="dashboard__refresh-time"
+              style={{ fontVariantNumeric: "tabular-nums" }}
+              aria-label="Versión actual"
+            >
+              {appVersion !== null ? `v${appVersion}` : "v—"}
+            </span>
+            <button
+              onClick={() => setShowChangelog(true)}
+              style={{
+                background: "none",
+                border: "none",
+                padding: "2px 4px",
+                cursor: "pointer",
+                fontSize: 12,
+                color: "var(--text-muted)",
+                textDecoration: "underline",
+              }}
+            >
+              Ver changelog
+            </button>
             <span className="dashboard__refresh-time">
               Actualizado: {formatRefreshAt(meta?.lastRefreshAt)}
             </span>
@@ -366,6 +399,13 @@ export function App() {
         {/* ── Groups Editor Panel ──────────────────────────────────────────── */}
         <GroupsEditor />
       </div>
+
+      {showChangelog && (
+        <ChangelogModal
+          changelogText={changelogRaw}
+          onClose={() => setShowChangelog(false)}
+        />
+      )}
     </div>
   );
 }

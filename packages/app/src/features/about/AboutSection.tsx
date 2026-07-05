@@ -188,23 +188,37 @@ export function AboutSectionView({
 
 // ── Connected ─────────────────────────────────────────────────────────────────
 
+export interface AboutSectionProps {
+  /**
+   * Optional override for the "Ver changelog" action. When provided, clicking
+   * "Ver changelog" delegates to this callback and NO in-place modal is
+   * rendered — used in the small popover window, which delegates to the
+   * dashboard window instead of rendering the (clipped) modal itself.
+   * When omitted, the section opens the changelog modal in place.
+   */
+  onOpenChangelog?: () => void;
+}
+
 /**
  * Connected "Acerca de" section: wires version + update hooks, manages
- * changelog modal visibility.
+ * changelog modal visibility (unless the caller delegates via
+ * `onOpenChangelog`).
  */
-export function AboutSection() {
+export function AboutSection({ onOpenChangelog }: AboutSectionProps = {}) {
   const { version } = useAppVersion();
   const updateState = useAppUpdate();
   const [showChangelog, setShowChangelog] = useState(false);
+
+  const delegated = onOpenChangelog !== undefined;
 
   return (
     <>
       <AboutSectionView
         version={version}
         updateState={updateState}
-        onOpenChangelog={() => setShowChangelog(true)}
+        onOpenChangelog={onOpenChangelog ?? (() => setShowChangelog(true))}
       />
-      {showChangelog && (
+      {!delegated && showChangelog && (
         <ChangelogModal
           changelogText={changelogRaw}
           onClose={() => setShowChangelog(false)}

@@ -7,6 +7,7 @@ import { useLimits } from "@/features/limits/useLimits";
 import { useTodayByProject } from "@/features/usage/useTodayByProject";
 import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { AboutSection } from "@/features/about/AboutSection";
+import { openChangelogInDashboard } from "@/features/about/changelogChannel";
 
 /**
  * Safely invoke a Tauri command. Returns null in non-Tauri environments.
@@ -207,7 +208,9 @@ export function Popover() {
             }}
             role="separator"
           />
-          <AboutSection />
+          <AboutSection
+            onOpenChangelog={() => void openChangelogInDashboard()}
+          />
         </>
       )}
     </div>
