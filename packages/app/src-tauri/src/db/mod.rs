@@ -8,9 +8,6 @@ use rusqlite::{params, Connection, Result as SqlResult};
 
 use crate::config::app_identity::DB_FILENAME;
 
-/// Current schema version. Bump when adding migrations.
-const CURRENT_SCHEMA_VERSION: u32 = 4;
-
 /// Open the production database in the OS app-data directory.
 ///
 /// Uses `directories::ProjectDirs` (bundle id `com.tokenwatch.app`) to locate
@@ -72,8 +69,20 @@ fn migrate(conn: &Connection) -> SqlResult<()> {
     }
 
     if version < 4 {
+        // D13: write the literal "4", not CURRENT_SCHEMA_VERSION, so a DB at v3
+        // does not skip v5 if it is opened again before that migration runs.
+        // Note: apply_v4 calls backfill_project_names which runs its own internal
+        // transaction, so we must not wrap it in an outer transaction here.
         apply_v4(conn)?;
-        set_meta(conn, "schema_version", &CURRENT_SCHEMA_VERSION.to_string())?;
+        set_meta(conn, "schema_version", "4")?;
+    }
+
+    if version < 5 {
+        // DDL only — safe to wrap in a transaction.
+        let tx = conn.unchecked_transaction()?;
+        apply_v5(&tx)?;
+        set_meta(&tx, "schema_version", "5")?;
+        tx.commit()?;
     }
 
     Ok(())
@@ -136,9 +145,36 @@ fn apply_v4(conn: &Connection) -> SqlResult<()> {
     backfill_project_names(conn)
 }
 
+/// Migration v5 — create `project_groups` and `project_group_members` tables
+/// for the per-group budget feature. Aditiva: no toca `usage_events`.
+fn apply_v5(conn: &Connection) -> SqlResult<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS project_groups (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            name         TEXT NOT NULL UNIQUE,
+            budget_basis TEXT,
+            budget_value REAL,
+            created_at   TEXT NOT NULL,
+            CHECK (budget_basis IN ('share', 'usd') OR budget_basis IS NULL),
+            CHECK (budget_basis IS NULL OR (budget_value > 0 AND (budget_basis <> 'share' OR budget_value <= 100)))
+        );
+        CREATE TABLE IF NOT EXISTS project_group_members (
+            project_name TEXT PRIMARY KEY,
+            group_id     INTEGER NOT NULL REFERENCES project_groups(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pgm_group_id ON project_group_members(group_id);
+        ",
+    )
+}
+
 /// Recompute `project_name` for every row from its stored `project_path`,
 /// updating in place within a single transaction (atomic). Idempotent: running
 /// on already-correct data is a no-op.
+///
+/// **D19 contract**: any future re-derivation that changes the `project_name`
+/// rule MUST also remap `project_group_members.project_name` with the same
+/// old→new mapping, or group memberships will silently fall through to "otros".
 fn backfill_project_names(conn: &Connection) -> SqlResult<()> {
     // Collect all (dedup_key, project_path) pairs first, then update in a
     // single transaction so the backfill is atomic.
@@ -326,7 +362,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, "4");
+        assert_eq!(version, "5");
     }
 
     #[test]

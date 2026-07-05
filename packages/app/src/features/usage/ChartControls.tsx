@@ -1,14 +1,14 @@
 import type { Bucket, Metric, SeriesBy, DateRangePreset, DateRangeFilter } from "./types";
 import { isHourAllowed } from "./dateRange";
 
-interface SegmentedControlProps<T extends string> {
+export interface SegmentedControlProps<T extends string> {
   label: string;
   options: { value: T; label: string; disabled?: boolean }[];
   value: T;
   onChange: (value: T) => void;
 }
 
-function SegmentedControl<T extends string>({
+export function SegmentedControl<T extends string>({
   label,
   options,
   value,

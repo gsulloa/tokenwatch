@@ -8,6 +8,7 @@ import { buildColorMap } from "@/features/usage/colors";
 import { orderSeries } from "@/features/usage/seriesUtils";
 import { formatTokens, formatTokensExact, formatCost } from "@/features/usage/format";
 import { resolvePreset, resolveCustomRange, effectiveBucket } from "@/features/usage/dateRange";
+import { GroupsEditor } from "@/features/budgets/GroupsEditor";
 import type { ChartControlsValue } from "@/features/usage/ChartControls";
 import type { DateRangeFilter } from "@/features/usage/types";
 
@@ -361,6 +362,9 @@ export function App() {
             </div>
           </div>
         )}
+
+        {/* ── Groups Editor Panel ──────────────────────────────────────────── */}
+        <GroupsEditor />
       </div>
     </div>
   );
