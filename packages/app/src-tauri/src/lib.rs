@@ -1,3 +1,4 @@
+pub mod budgets;
 pub mod config;
 pub mod db;
 pub mod ingest;
@@ -37,6 +38,7 @@ pub fn run() {
             // Register the state with Tauri (managed state for commands).
             app.manage(AppState {
                 conn: Mutex::new(conn),
+                last_limits: std::sync::Mutex::new(None),
             });
 
             // Spawn the background polling task: ingest at startup + every 30s.
@@ -86,6 +88,14 @@ pub fn run() {
             limits::query_limits,
             limits::get_alerts_muted,
             limits::set_alerts_muted,
+            budgets::list_groups,
+            budgets::create_group,
+            budgets::update_group,
+            budgets::delete_group,
+            budgets::assign_project,
+            budgets::unassign_project,
+            budgets::list_project_names,
+            budgets::query_group_budgets,
             open_dashboard,
         ])
         .run(tauri::generate_context!())

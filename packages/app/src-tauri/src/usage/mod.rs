@@ -15,7 +15,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::{db, ingest};
+use crate::{db, ingest, limits::LimitsSnapshot};
 
 /// Seconds between background ingest polls.
 pub const POLL_INTERVAL_SECS: u64 = 30;
@@ -130,6 +130,11 @@ pub struct TodayByProject {
 
 pub struct AppState {
     pub conn: Mutex<Connection>,
+    /// Cached last known limits snapshot (D7). Written by the limits poll and by
+    /// `query_limits`; read by `query_group_budgets` without doing network I/O.
+    /// Uses `std::sync::Mutex` (not tokio) — always clone and drop the guard
+    /// before touching `conn` or any `.await`.
+    pub last_limits: std::sync::Mutex<Option<LimitsSnapshot>>,
 }
 
 // ---------------------------------------------------------------------------

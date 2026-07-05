@@ -9,7 +9,7 @@
 //! - `get_alerts_muted`   — read the mute flag
 //! - `set_alerts_muted`   — write the mute flag
 
-use chrono::Utc;
+use chrono::{Duration, SecondsFormat, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -82,6 +82,38 @@ impl LimitsSnapshot {
             },
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Session-window helper (D7 / D12)
+// ---------------------------------------------------------------------------
+
+/// Derive `(resets_at, window_start, utilization)` from the cached limits snapshot.
+///
+/// `window_start` = `session.resets_at − 5h`, serialised as `…Z` millis
+/// (e.g. `"2026-07-05T10:00:00.000Z"`) so it compares lexicographically with
+/// the `…000Z` timestamps stored by the JSONL ingester (D12).
+///
+/// `utilization` = `session.utilization` (0–100 %).
+///
+/// Returns `None` when: no snapshot is cached, the snapshot has no session, or
+/// `resets_at` cannot be parsed — in all these cases the caller should fall back
+/// to a rolling `now − 5h` window.
+pub fn current_session_window(state: &AppState) -> Option<(String, String, f64)> {
+    let snapshot = state.last_limits.lock().ok().and_then(|g| g.clone())?;
+
+    let session = snapshot.session?;
+    let resets_at_str = session.resets_at;
+    let utilization = session.utilization;
+
+    let resets_at = chrono::DateTime::parse_from_rfc3339(&resets_at_str)
+        .ok()?
+        .with_timezone(&Utc);
+
+    let window_start = resets_at - Duration::hours(5);
+    let window_start_str = window_start.to_rfc3339_opts(SecondsFormat::Millis, true);
+
+    Some((resets_at_str, window_start_str, utilization))
 }
 
 // ---------------------------------------------------------------------------
@@ -457,18 +489,43 @@ pub fn spawn_limits_polling_task(app_handle: AppHandle) {
 
 async fn run_limits_and_emit(app_handle: &AppHandle) {
     let snapshot = fetch_snapshot().await;
+    let state = app_handle.state::<AppState>();
+
+    // Write snapshot to cache (D7) — clone under lock, drop before touching conn.
+    if let Ok(mut g) = state.last_limits.lock() {
+        *g = Some(snapshot.clone());
+    }
 
     // Evaluate alerts if snapshot is Ok.
     if matches!(snapshot.status, LimitsStatus::Ok) {
-        let state = app_handle.state::<AppState>();
-        let alert_results: Option<(bool, Vec<AlertToFire>)> = state.conn.lock().ok().map(|conn| {
-            let muted = alerts_muted(&conn);
-            let alerts = evaluate_alerts(&conn, &snapshot);
-            (muted, alerts)
-        });
-        if let Some((muted, alerts)) = alert_results {
-            if !muted && !alerts.is_empty() {
-                send_notifications(app_handle, &alerts);
+        let session_resets_at = snapshot.session.as_ref().map(|w| w.resets_at.clone());
+
+        let alert_results: Option<(bool, Vec<AlertToFire>, Vec<String>)> =
+            state.conn.lock().ok().map(|conn| {
+                let muted = alerts_muted(&conn);
+                let global_alerts = evaluate_alerts(&conn, &snapshot);
+                // Compute group budgets and evaluate group alerts under the same lock.
+                let group_notifications =
+                    crate::budgets::run_group_alerts(&conn, &state, session_resets_at.as_deref());
+                (muted, global_alerts, group_notifications)
+            });
+
+        if let Some((muted, global_alerts, group_notifications)) = alert_results {
+            if !muted {
+                if !global_alerts.is_empty() {
+                    send_notifications(app_handle, &global_alerts);
+                }
+                for text in group_notifications {
+                    if let Err(e) = app_handle
+                        .notification()
+                        .builder()
+                        .title("TokenWatch")
+                        .body(&text)
+                        .show()
+                    {
+                        tracing::warn!("failed to send group notification: {e}");
+                    }
+                }
             }
         }
     }
@@ -484,8 +541,15 @@ async fn run_limits_and_emit(app_handle: &AppHandle) {
 
 /// Immediately fetch current usage limits and return a snapshot.
 #[tauri::command]
-pub async fn query_limits(_state: State<'_, AppState>) -> Result<LimitsSnapshot, String> {
-    Ok(fetch_snapshot().await)
+pub async fn query_limits(state: State<'_, AppState>) -> Result<LimitsSnapshot, String> {
+    let snapshot = fetch_snapshot().await;
+    // D17: also seed the cache on explicit refresh so budgets work immediately.
+    if matches!(snapshot.status, LimitsStatus::Ok) {
+        if let Ok(mut g) = state.last_limits.lock() {
+            *g = Some(snapshot.clone());
+        }
+    }
+    Ok(snapshot)
 }
 
 /// Return whether alert notifications are currently muted.

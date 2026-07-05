@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { LimitsSection } from "@/features/limits/LimitsSection";
 import { TodayByProjectList } from "@/features/usage/TodayByProjectList";
+import { GroupBudgetsSection } from "@/features/budgets/GroupBudgetsSection";
+import { useGroupBudgets } from "@/features/budgets/useGroupBudgets";
 import { useLimits } from "@/features/limits/useLimits";
 import { useTodayByProject } from "@/features/usage/useTodayByProject";
 import { UpdateBanner } from "@/features/updates/UpdateBanner";
@@ -68,6 +70,13 @@ export function Popover() {
     refresh: refreshToday,
   } = useTodayByProject();
 
+  // Used to conditionally show the GroupBudgetsSection + its surrounding separators
+  const { snapshot: budgetsSnapshot, loading: budgetsLoading } = useGroupBudgets();
+  const hasDefinedGroups =
+    budgetsLoading ||
+    (budgetsSnapshot !== null &&
+      budgetsSnapshot.rows.some((r) => r.groupId !== null));
+
   const [alertsMuted, setAlertsMuted] = useState(false);
   const [muteLoading, setMuteLoading] = useState(false);
 
@@ -113,6 +122,21 @@ export function Popover() {
         }}
         role="separator"
       />
+
+      {hasDefinedGroups && (
+        <>
+          <GroupBudgetsSection snapshot={budgetsSnapshot} loading={budgetsLoading} />
+
+          <div
+            style={{
+              height: 1,
+              background: "var(--border)",
+              margin: "0 calc(-1 * var(--space-xs))",
+            }}
+            role="separator"
+          />
+        </>
+      )}
 
       <TodayByProjectList data={todayData} loading={todayLoading} />
 
