@@ -74,6 +74,10 @@ PR titles follow the same convention. Scope is optional but encouraged for large
 4. Open a PR against `master` with a clear description of what changed and why.
 5. Reference any related issue with `Closes #123` or `Relates to #123`.
 
+## Releases & signing
+
+Release builds are signed with a Tauri updater key pair so that installed clients can verify updates. See [docs/RELEASE_SETUP.md](./docs/RELEASE_SETUP.md) for how to provision the key pair, where the private key lives, and the rotation procedure.
+
 ## Security issues
 
 Do **not** open a public issue for security vulnerabilities. Follow the private reporting process described in [SECURITY.md](./SECURITY.md).
