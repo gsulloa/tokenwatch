@@ -24,7 +24,8 @@
       "@/app/*": ["src/app/*"],
       "@/styles/*": ["src/styles/*"],
       "@/assets/*": ["src/assets/*"],
-      "@/features/*": ["src/features/*"]
+      "@/features/*": ["src/features/*"],
+      "@/generated/*": ["src/generated/*"]
     }
   },
   "include": ["src"],

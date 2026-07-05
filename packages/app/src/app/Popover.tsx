@@ -6,6 +6,8 @@ import { useGroupBudgets } from "@/features/budgets/useGroupBudgets";
 import { useLimits } from "@/features/limits/useLimits";
 import { useTodayByProject } from "@/features/usage/useTodayByProject";
 import { UpdateBanner } from "@/features/updates/UpdateBanner";
+import { AboutSection } from "@/features/about/AboutSection";
+import { openChangelogInDashboard } from "@/features/about/changelogChannel";
 
 /**
  * Safely invoke a Tauri command. Returns null in non-Tauri environments.
@@ -79,6 +81,7 @@ export function Popover() {
 
   const [alertsMuted, setAlertsMuted] = useState(false);
   const [muteLoading, setMuteLoading] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
 
   // Load initial mute state
   useEffect(() => {
@@ -163,21 +166,53 @@ export function Popover() {
           onChange={(v) => void handleMuteChange(v)}
           disabled={muteLoading}
         />
-        <button
-          onClick={() => void safeTauriInvoke<void>("open_dashboard")}
-          style={{
-            background: "none",
-            border: "none",
-            padding: "2px 4px",
-            cursor: "pointer",
-            fontSize: 12,
-            color: "var(--text-muted)",
-            textDecoration: "underline",
-          }}
-        >
-          Abrir dashboard de costos
-        </button>
+        <div style={{ display: "flex", gap: "var(--space-xs)", alignItems: "center" }}>
+          <button
+            onClick={() => setShowAbout((v) => !v)}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "2px 4px",
+              cursor: "pointer",
+              fontSize: 12,
+              color: "var(--text-muted)",
+              textDecoration: "underline",
+            }}
+          >
+            Acerca de
+          </button>
+          <button
+            onClick={() => void safeTauriInvoke<void>("open_dashboard")}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "2px 4px",
+              cursor: "pointer",
+              fontSize: 12,
+              color: "var(--text-muted)",
+              textDecoration: "underline",
+            }}
+          >
+            Abrir dashboard de costos
+          </button>
+        </div>
       </div>
+
+      {showAbout && (
+        <>
+          <div
+            style={{
+              height: 1,
+              background: "var(--border)",
+              margin: "0 calc(-1 * var(--space-xs))",
+            }}
+            role="separator"
+          />
+          <AboutSection
+            onOpenChangelog={() => void openChangelogInDashboard()}
+          />
+        </>
+      )}
     </div>
   );
 }

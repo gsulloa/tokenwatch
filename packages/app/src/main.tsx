@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "@/app/App";
 import { Popover } from "@/app/Popover";
+import { WhatsNewModal } from "@/features/whats-new/WhatsNewModal";
 import { APP_DISPLAY_NAME } from "@/platform/app-identity";
 import "@/styles/global.css";
 
@@ -47,6 +48,7 @@ async function bootstrap() {
     ReactDOM.createRoot(rootEl).render(
       <React.StrictMode>
         <App />
+        <WhatsNewModal />
       </React.StrictMode>,
     );
   }
