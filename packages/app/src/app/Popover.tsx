@@ -3,6 +3,7 @@ import { LimitsSection } from "@/features/limits/LimitsSection";
 import { TodayByProjectList } from "@/features/usage/TodayByProjectList";
 import { useLimits } from "@/features/limits/useLimits";
 import { useTodayByProject } from "@/features/usage/useTodayByProject";
+import { UpdateBanner } from "@/features/updates/UpdateBanner";
 
 /**
  * Safely invoke a Tauri command. Returns null in non-Tauri environments.
@@ -123,6 +124,8 @@ export function Popover() {
         }}
         role="separator"
       />
+
+      <UpdateBanner />
 
       <div
         style={{
