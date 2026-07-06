@@ -97,6 +97,28 @@ export function Popover() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The popover webview persists between shows (it's a non-activating NSPanel),
+  // and becoming key can leave it scrolled to the bottom. On each show the
+  // backend emits "popover-shown"; pin the scroll back to the top.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen("popover-shown", () => {
+          requestAnimationFrame(() => {
+            (document.activeElement as HTMLElement | null)?.blur?.();
+            window.scrollTo(0, 0);
+            document.scrollingElement?.scrollTo(0, 0);
+          });
+        });
+      } catch {
+        // Non-Tauri environment — nothing to listen to.
+      }
+    })();
+    return () => unlisten?.();
+  }, []);
+
   const handleMuteChange = useCallback(async (muted: boolean) => {
     setMuteLoading(true);
     try {
