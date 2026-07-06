@@ -1,7 +1,9 @@
 /**
- * Full-changelog modal. Renders the raw changelog markdown in a readable way
- * using `<pre>`-style layout — no external markdown dependencies needed.
+ * Full-changelog modal. Renders the packaged changelog as formatted markdown
+ * using the Markdown component (headings, lists, emphasis, links).
  */
+
+import { Markdown } from "@/components/Markdown/Markdown";
 
 interface ChangelogModalProps {
   changelogText: string;
@@ -75,19 +77,7 @@ export function ChangelogModal({ changelogText, onClose }: ChangelogModalProps) 
         </div>
 
         {/* Content */}
-        <pre
-          style={{
-            margin: 0,
-            fontSize: 12,
-            color: "var(--text)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            lineHeight: 1.7,
-            fontFamily: "inherit",
-          }}
-        >
-          {changelogText}
-        </pre>
+        <Markdown source={changelogText} />
 
         {/* Footer */}
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
