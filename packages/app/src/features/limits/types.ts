@@ -23,6 +23,7 @@ export type LimitsStatus =
         | "not_signed_in"
         | "keychain_denied"
         | "expired"
+        | "rate_limited"
         | "network"
         | "http"
         | "parse";

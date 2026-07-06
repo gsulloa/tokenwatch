@@ -30,6 +30,13 @@ pub const LIMITS_UPDATED_EVENT: &str = "limits-updated";
 pub const LIMITS_POLL_SECS: u64 = 300;
 
 // ---------------------------------------------------------------------------
+// Retry constants
+// ---------------------------------------------------------------------------
+
+const MAX_LIMITS_RETRIES: u32 = 2;
+const RETRY_CAP_MS: u64 = 1500;
+
+// ---------------------------------------------------------------------------
 // Threshold constants
 // ---------------------------------------------------------------------------
 
@@ -224,35 +231,128 @@ fn read_keychain_token() -> Result<String, String> {
 // HTTP fetch
 // ---------------------------------------------------------------------------
 
+/// Returns true for transient failures where serving stale cached data is
+/// preferable to an error.
+fn is_transient(reason: &str) -> bool {
+    matches!(reason, "rate_limited" | "network" | "http")
+}
+
 async fn fetch_usage(token: &str) -> Result<LimitsSnapshot, String> {
     let client = reqwest::Client::new();
-    let resp = client
-        .get("https://api.anthropic.com/api/oauth/usage")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("anthropic-beta", "oauth-2025-04-20")
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::warn!("limits network error: {e}");
-            "network".to_owned()
+
+    let mut last_err = String::new();
+    for attempt in 0..=(MAX_LIMITS_RETRIES) {
+        // Calculate wait before this attempt (no wait before first attempt).
+        if attempt > 0 {
+            let wait_ms = {
+                // Exponential backoff: 500ms * 2^(attempt-1), capped at RETRY_CAP_MS.
+                let base: u64 = 500u64.saturating_mul(1u64 << (attempt - 1));
+                base.min(RETRY_CAP_MS)
+            };
+            tracing::debug!(
+                "limits fetch retry {attempt}/{MAX_LIMITS_RETRIES} after {wait_ms}ms (reason: {last_err})"
+            );
+            tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
+        }
+
+        let resp = match client
+            .get("https://api.anthropic.com/api/oauth/usage")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("anthropic-beta", "oauth-2025-04-20")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!("limits network error (attempt {attempt}): {e}");
+                last_err = "network".to_owned();
+                if attempt < MAX_LIMITS_RETRIES {
+                    continue;
+                }
+                tracing::warn!("limits network error after retries: {e}");
+                return Err("network".to_owned());
+            }
+        };
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            // Read Retry-After header if present and compute wait for next attempt.
+            let retry_after_ms = resp
+                .headers()
+                .get("Retry-After")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|secs| (secs * 1000).min(RETRY_CAP_MS));
+
+            last_err = "rate_limited".to_owned();
+
+            if attempt < MAX_LIMITS_RETRIES {
+                // If the server supplied a Retry-After header, sleep that duration now
+                // (capped at RETRY_CAP_MS). The top-of-loop exponential backoff will
+                // fire on the next iteration regardless, but since we `continue` here
+                // the loop increment happens first, so both are applied. In practice
+                // Retry-After is rare and the cap keeps total delay bounded.
+                if let Some(wait_ms) = retry_after_ms {
+                    tracing::debug!("limits 429 (attempt {attempt}), Retry-After: {wait_ms}ms");
+                    tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
+                }
+                continue;
+            }
+
+            tracing::warn!("limits endpoint rate-limited (429) after retries");
+            return Err("rate_limited".to_owned());
+        }
+
+        if !status.is_success() {
+            tracing::warn!("limits endpoint returned HTTP {status}");
+            return Err("http".to_owned());
+        }
+
+        let api: ApiResponse = resp.json().await.map_err(|e| {
+            tracing::warn!("limits parse error: {e}");
+            "parse".to_owned()
         })?;
 
-    let status = resp.status();
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        tracing::warn!("limits endpoint returned 429");
-        return Err("http".to_owned());
-    }
-    if !status.is_success() {
-        tracing::warn!("limits endpoint returned HTTP {status}");
-        return Err("http".to_owned());
+        return parse_api_response(api);
     }
 
-    let api: ApiResponse = resp.json().await.map_err(|e| {
-        tracing::warn!("limits parse error: {e}");
-        "parse".to_owned()
-    })?;
+    // Exhausted retries.
+    Err(last_err)
+}
 
-    parse_api_response(api)
+/// On success: update the cache and return the fresh snapshot.
+/// On a transient failure with a cached OK snapshot: return the cached snapshot
+/// (keep the gauges populated) WITHOUT overwriting the cache.
+/// Otherwise (auth errors, or no cache): return the fresh unavailable snapshot as-is.
+///
+/// Uses a pure inner function `choose_snapshot` for testability.
+fn choose_snapshot(
+    fresh: LimitsSnapshot,
+    cached: Option<LimitsSnapshot>,
+) -> (LimitsSnapshot, bool /* should_write_cache */) {
+    match &fresh.status {
+        LimitsStatus::Ok => (fresh, true),
+        LimitsStatus::Unavailable { reason } if is_transient(reason) => match cached {
+            Some(c) if matches!(c.status, LimitsStatus::Ok) => {
+                tracing::debug!("serving cached limits snapshot after transient error: {reason}");
+                (c, false)
+            }
+            _ => (fresh, false),
+        },
+        _ => (fresh, false),
+    }
+}
+
+fn reconcile_with_cache(fresh: LimitsSnapshot, state: &AppState) -> LimitsSnapshot {
+    // Clone under the lock, then drop the guard before any further work.
+    let cached = state.last_limits.lock().ok().and_then(|g| g.clone());
+    let (result, should_write) = choose_snapshot(fresh, cached);
+    if should_write {
+        if let Ok(mut g) = state.last_limits.lock() {
+            *g = Some(result.clone());
+        }
+    }
+    result
 }
 
 fn parse_api_response(api: ApiResponse) -> Result<LimitsSnapshot, String> {
@@ -488,13 +588,9 @@ pub fn spawn_limits_polling_task(app_handle: AppHandle) {
 }
 
 async fn run_limits_and_emit(app_handle: &AppHandle) {
-    let snapshot = fetch_snapshot().await;
     let state = app_handle.state::<AppState>();
-
-    // Write snapshot to cache (D7) — clone under lock, drop before touching conn.
-    if let Ok(mut g) = state.last_limits.lock() {
-        *g = Some(snapshot.clone());
-    }
+    // reconcile_with_cache: updates cache on Ok, serves cached-good on transient failure.
+    let snapshot = reconcile_with_cache(fetch_snapshot().await, &state);
 
     // Evaluate alerts if snapshot is Ok.
     if matches!(snapshot.status, LimitsStatus::Ok) {
@@ -542,14 +638,8 @@ async fn run_limits_and_emit(app_handle: &AppHandle) {
 /// Immediately fetch current usage limits and return a snapshot.
 #[tauri::command]
 pub async fn query_limits(state: State<'_, AppState>) -> Result<LimitsSnapshot, String> {
-    let snapshot = fetch_snapshot().await;
-    // D17: also seed the cache on explicit refresh so budgets work immediately.
-    if matches!(snapshot.status, LimitsStatus::Ok) {
-        if let Ok(mut g) = state.last_limits.lock() {
-            *g = Some(snapshot.clone());
-        }
-    }
-    Ok(snapshot)
+    let fresh = fetch_snapshot().await;
+    Ok(reconcile_with_cache(fresh, &state))
 }
 
 /// Return whether alert notifications are currently muted.
@@ -565,4 +655,145 @@ pub fn set_alerts_muted(state: State<'_, AppState>, muted: bool) -> Result<(), S
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     db::meta_set(&conn, "alerts_muted", if muted { "true" } else { "false" })
         .map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok_snapshot() -> LimitsSnapshot {
+        LimitsSnapshot {
+            session: Some(Window {
+                label: None,
+                utilization: 42.0,
+                resets_at: "2026-07-06T12:00:00Z".to_owned(),
+            }),
+            weekly: None,
+            weekly_by_model: vec![],
+            fetched_at: Utc::now().to_rfc3339(),
+            status: LimitsStatus::Ok,
+        }
+    }
+
+    fn unavailable_snapshot(reason: &str) -> LimitsSnapshot {
+        LimitsSnapshot::unavailable(reason)
+    }
+
+    // -----------------------------------------------------------------------
+    // is_transient
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_transient_returns_true_for_transient_reasons() {
+        assert!(is_transient("rate_limited"));
+        assert!(is_transient("network"));
+        assert!(is_transient("http"));
+    }
+
+    #[test]
+    fn is_transient_returns_false_for_auth_and_parse_reasons() {
+        assert!(!is_transient("not_signed_in"));
+        assert!(!is_transient("keychain_denied"));
+        assert!(!is_transient("expired"));
+        assert!(!is_transient("parse"));
+    }
+
+    // -----------------------------------------------------------------------
+    // choose_snapshot (pure function — core cache-reconcile logic)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn choose_snapshot_ok_fresh_updates_cache_and_returns_fresh() {
+        let fresh = ok_snapshot();
+        let (result, should_write) = choose_snapshot(fresh.clone(), None);
+        assert!(should_write, "fresh Ok should request a cache write");
+        assert!(
+            matches!(result.status, LimitsStatus::Ok),
+            "result should be Ok"
+        );
+        // Utilization should match the fresh snapshot.
+        assert_eq!(
+            result.session.as_ref().unwrap().utilization,
+            fresh.session.unwrap().utilization
+        );
+    }
+
+    #[test]
+    fn choose_snapshot_transient_with_cached_ok_returns_cached() {
+        let cached = ok_snapshot();
+        let fresh = unavailable_snapshot("rate_limited");
+        let (result, should_write) = choose_snapshot(fresh, Some(cached.clone()));
+        assert!(
+            !should_write,
+            "transient failure should NOT request a cache write"
+        );
+        assert!(
+            matches!(result.status, LimitsStatus::Ok),
+            "should return cached Ok snapshot"
+        );
+        assert_eq!(
+            result.session.as_ref().unwrap().utilization,
+            cached.session.unwrap().utilization
+        );
+    }
+
+    #[test]
+    fn choose_snapshot_transient_network_with_cached_ok_returns_cached() {
+        let cached = ok_snapshot();
+        let fresh = unavailable_snapshot("network");
+        let (result, should_write) = choose_snapshot(fresh, Some(cached));
+        assert!(!should_write);
+        assert!(matches!(result.status, LimitsStatus::Ok));
+    }
+
+    #[test]
+    fn choose_snapshot_transient_http_with_cached_ok_returns_cached() {
+        let cached = ok_snapshot();
+        let fresh = unavailable_snapshot("http");
+        let (result, should_write) = choose_snapshot(fresh, Some(cached));
+        assert!(!should_write);
+        assert!(matches!(result.status, LimitsStatus::Ok));
+    }
+
+    #[test]
+    fn choose_snapshot_transient_with_no_cache_returns_unavailable() {
+        let fresh = unavailable_snapshot("rate_limited");
+        let (result, should_write) = choose_snapshot(fresh, None);
+        assert!(!should_write);
+        assert!(
+            matches!(result.status, LimitsStatus::Unavailable { .. }),
+            "no cache → should return the unavailable snapshot"
+        );
+    }
+
+    #[test]
+    fn choose_snapshot_auth_error_returns_unavailable_even_with_cached_ok() {
+        let cached = ok_snapshot();
+        let reasons = ["expired", "not_signed_in", "keychain_denied"];
+        for reason in reasons {
+            let fresh = unavailable_snapshot(reason);
+            let (result, should_write) = choose_snapshot(fresh, Some(cached.clone()));
+            assert!(
+                !should_write,
+                "auth error should not write cache (reason={reason})"
+            );
+            assert!(
+                matches!(result.status, LimitsStatus::Unavailable { .. }),
+                "auth error should return unavailable even with cached Ok (reason={reason})"
+            );
+        }
+    }
+
+    #[test]
+    fn choose_snapshot_parse_error_returns_unavailable_even_with_cached_ok() {
+        let cached = ok_snapshot();
+        let fresh = unavailable_snapshot("parse");
+        let (result, should_write) = choose_snapshot(fresh, Some(cached));
+        assert!(!should_write);
+        assert!(matches!(result.status, LimitsStatus::Unavailable { .. }));
+    }
 }

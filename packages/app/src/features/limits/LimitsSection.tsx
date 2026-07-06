@@ -17,6 +17,9 @@ function UnavailableMessage({ reason }: UnavailableMessageProps) {
       message =
         'Permiso denegado al Keychain. Abre las preferencias de seguridad y elige "Permitir siempre" para TokenWatch.';
       break;
+    case "rate_limited":
+      message = "Demasiadas solicitudes a Claude. Reintentando…";
+      break;
     case "network":
     case "http":
     case "parse":

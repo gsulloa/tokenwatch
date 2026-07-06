@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { LimitsSnapshot, LimitsWindow } from "./types";
 
 /**
@@ -81,6 +81,7 @@ function normalizeSnapshot(raw: RawSnapshot): LimitsSnapshot {
             | "not_signed_in"
             | "keychain_denied"
             | "expired"
+            | "rate_limited"
             | "network"
             | "http"
             | "parse",
@@ -98,11 +99,17 @@ function normalizeSnapshot(raw: RawSnapshot): LimitsSnapshot {
   };
 }
 
+/** Minimum ms between on-open refreshes to avoid hammering the API on rapid toggles. */
+const MIN_REFRESH_INTERVAL_MS = 10_000;
+
 interface UseLimitsResult {
   snapshot: LimitsSnapshot | null;
   loading: boolean;
   error: string | null;
+  /** Force an unconditional fetch regardless of the last fetch time. */
   refresh: () => void;
+  /** Fetch only if more than MIN_REFRESH_INTERVAL_MS has elapsed since the last successful fetch. */
+  refreshIfStale: () => void;
 }
 
 /**
@@ -114,6 +121,9 @@ export function useLimits(): UseLimitsResult {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Timestamp (ms) of the last SUCCESSFUL fetch. 0 = never fetched. */
+  const lastFetchAtRef = useRef<number>(0);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -121,6 +131,7 @@ export function useLimits(): UseLimitsResult {
       const raw = await safeTauriInvoke<RawSnapshot>("query_limits");
       if (raw !== null) {
         setSnapshot(normalizeSnapshot(raw));
+        lastFetchAtRef.current = Date.now();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -128,6 +139,18 @@ export function useLimits(): UseLimitsResult {
       setLoading(false);
     }
   }, []);
+
+  /**
+   * Throttled refresh: skips the fetch when a successful fetch completed within
+   * the last MIN_REFRESH_INTERVAL_MS to avoid redundant API calls on rapid
+   * popover open/close toggles.
+   */
+  const refreshIfStale = useCallback(() => {
+    if (Date.now() - lastFetchAtRef.current < MIN_REFRESH_INTERVAL_MS) {
+      return;
+    }
+    void fetchData();
+  }, [fetchData]);
 
   // Fetch on mount
   useEffect(() => {
@@ -149,5 +172,5 @@ export function useLimits(): UseLimitsResult {
     };
   }, [fetchData]);
 
-  return { snapshot, loading, error, refresh: fetchData };
+  return { snapshot, loading, error, refresh: fetchData, refreshIfStale };
 }
