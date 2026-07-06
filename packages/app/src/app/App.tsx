@@ -40,6 +40,7 @@ const SERIES_BY_LABELS: Record<ChartControlsValue["seriesBy"], string> = {
   model: "Modelo",
   project: "Proyecto",
   modelProject: "Modelo-Proyecto",
+  group: "Grupo",
 };
 
 const BUCKET_LABELS: Record<ChartControlsValue["bucket"], string> = {
