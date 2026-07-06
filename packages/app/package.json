@@ -1,7 +1,7 @@
 {
   "name": "tokenwatch",
   "private": false,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A macOS menu-bar app for monitoring Claude / Codex token usage per project and workspace.",
   "license": "MIT",
   "author": "Gabriel Ulloa <gabriel.ulloa.e@gmail.com>",

@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-06
+
+### Added
+- refresh usage limits on popover open and handle 429 gracefully (#28)
+- add group option to dashboard series segmentation (#27)
+
+
+
 ## [0.2.2] - 2026-07-06
 
 ### Added
