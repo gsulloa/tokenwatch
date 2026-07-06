@@ -1,5 +1,6 @@
 import { useWhatsNew } from "./useWhatsNew";
 import type { UseWhatsNewResult } from "./useWhatsNew";
+import { Markdown } from "@/components/Markdown/Markdown";
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,7 @@ type WhatsNewModalViewProps = Pick<
 
 /**
  * Pure presentational What's New modal.
+ * Renders the version section as markdown (headings, lists, emphasis, links).
  * Renders nothing when `show` is false.
  */
 export function WhatsNewModalView({
@@ -103,12 +105,14 @@ export function WhatsNewModalView({
           style={{
             fontSize: 13,
             color: "var(--text)",
-            whiteSpace: "pre-wrap",
-            lineHeight: 1.6,
             fontFamily: "inherit",
           }}
         >
-          {versionSection ?? "Sin notas para esta versión."}
+          {versionSection ? (
+            <Markdown source={versionSection} />
+          ) : (
+            "Sin notas para esta versión."
+          )}
         </div>
 
         {/* Footer */}
