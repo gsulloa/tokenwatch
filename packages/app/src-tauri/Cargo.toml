@@ -1,6 +1,6 @@
 [package]
 name = "tokenwatch"
-version = "0.2.0"
+version = "0.2.1"
 description = "A macOS menu-bar app for monitoring Claude / Codex token usage per project and workspace."
 authors = ["Gabriel Ulloa <gabriel.ulloa.e@gmail.com>"]
 license = "MIT"
