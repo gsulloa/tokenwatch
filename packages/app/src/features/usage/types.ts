@@ -5,7 +5,7 @@ export type Bucket = "hour" | "day" | "week" | "month";
 export type Metric = "tokens" | "cost";
 
 /** Dimension to split series by. */
-export type SeriesBy = "model" | "project" | "modelProject";
+export type SeriesBy = "model" | "project" | "modelProject" | "group";
 
 /** Date range preset for the chart filter control. */
 export type DateRangePreset =

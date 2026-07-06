@@ -58,6 +58,22 @@ describe("ChartControls", () => {
     });
   });
 
+  it("renders the Grupo option and calls onChange with seriesBy=group when clicked", () => {
+    const onChange = vi.fn();
+    render(<ChartControls value={DEFAULT_VALUE} onChange={onChange} />);
+
+    const grupoButton = screen.getByRole("button", { name: "Grupo" });
+    expect(grupoButton).toBeInTheDocument();
+
+    fireEvent.click(grupoButton);
+
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith({
+      ...DEFAULT_VALUE,
+      seriesBy: "group",
+    });
+  });
+
   it("shows the currently selected values with aria-pressed=true", () => {
     render(<ChartControls value={DEFAULT_VALUE} onChange={() => {}} />);
 

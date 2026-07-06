@@ -108,6 +108,7 @@ const SERIES_BY_OPTIONS: { value: SeriesBy; label: string }[] = [
   { value: "model", label: "Modelo" },
   { value: "project", label: "Proyecto" },
   { value: "modelProject", label: "Modelo-Proyecto" },
+  { value: "group", label: "Grupo" },
 ];
 
 const DATE_PRESET_OPTIONS: { value: DateRangePreset; label: string }[] = [
