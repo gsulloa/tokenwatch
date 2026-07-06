@@ -63,7 +63,7 @@ export function Popover() {
   const {
     snapshot,
     loading: limitsLoading,
-    refresh: refreshLimits,
+    refreshIfStale: refreshLimitsIfStale,
   } = useLimits();
 
   const {
@@ -90,16 +90,20 @@ export function Popover() {
     });
   }, []);
 
-  // Trigger immediate refresh of both hooks on mount
+  // Trigger immediate refresh of both hooks on mount.
+  // Uses the throttled path for limits so the first popover open right after
+  // startup doesn't double-fetch when the popover-shown event fires shortly after.
   useEffect(() => {
-    void refreshLimits();
+    refreshLimitsIfStale();
     void refreshToday();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // The popover webview persists between shows (it's a non-activating NSPanel),
   // and becoming key can leave it scrolled to the bottom. On each show the
-  // backend emits "popover-shown"; pin the scroll back to the top.
+  // backend emits "popover-shown"; pin the scroll back to the top and trigger
+  // a throttled limits refresh + today-by-project refresh so the gauges reflect
+  // current data on every open.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void (async () => {
@@ -111,13 +115,15 @@ export function Popover() {
             window.scrollTo(0, 0);
             document.scrollingElement?.scrollTo(0, 0);
           });
+          refreshLimitsIfStale();
+          void refreshToday();
         });
       } catch {
         // Non-Tauri environment — nothing to listen to.
       }
     })();
     return () => unlisten?.();
-  }, []);
+  }, [refreshLimitsIfStale, refreshToday]);
 
   const handleMuteChange = useCallback(async (muted: boolean) => {
     setMuteLoading(true);

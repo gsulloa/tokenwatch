@@ -52,6 +52,7 @@ pub enum SeriesBy {
     Model,
     Project,
     ModelProject,
+    Group,
 }
 
 /// Parameters for `query_series`.
@@ -386,10 +387,19 @@ fn query_series_inner(conn: &Connection, params: &SeriesQuery) -> anyhow::Result
     };
 
     // Build the GROUP BY / SELECT expression for the series name.
-    let series_col = match params.series_by {
-        SeriesBy::Model => "model".to_owned(),
-        SeriesBy::Project => "project_name".to_owned(),
-        SeriesBy::ModelProject => "model || ' \u{00b7} ' || project_name".to_owned(),
+    // For Group, join against project_group_members / project_groups and
+    // collapse ungrouped projects into the literal "otros".
+    let (series_col, from_clause) = match params.series_by {
+        SeriesBy::Model => ("model".to_owned(), "usage_events".to_owned()),
+        SeriesBy::Project => ("project_name".to_owned(), "usage_events".to_owned()),
+        SeriesBy::ModelProject => (
+            "model || ' \u{00b7} ' || project_name".to_owned(),
+            "usage_events".to_owned(),
+        ),
+        SeriesBy::Group => (
+            "COALESCE(g.name, 'otros')".to_owned(),
+            "usage_events e LEFT JOIN project_group_members m ON m.project_name = e.project_name LEFT JOIN project_groups g ON g.id = m.group_id".to_owned(),
+        ),
     };
 
     // Build the metric aggregate expression.
@@ -420,7 +430,7 @@ fn query_series_inner(conn: &Connection, params: &SeriesQuery) -> anyhow::Result
         "SELECT strftime('{strftime_fmt}', timestamp, 'localtime') AS bucket_label,
                 {series_col} AS series_name,
                 {metric_expr} AS value
-         FROM usage_events
+         FROM {from_clause}
          {where_clause}
          GROUP BY bucket_label, series_name
          ORDER BY bucket_label, series_name"
@@ -1353,6 +1363,269 @@ mod tests {
         assert!(
             (total - 330.0).abs() < 1.0,
             "expected 330 tokens; got {total}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // SeriesBy::Group tests
+    // -------------------------------------------------------------------------
+
+    /// Helper: insert a project_groups row and return its rowid.
+    fn insert_group(conn: &Connection, name: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO project_groups (name, budget_basis, budget_value, created_at) VALUES (?1, NULL, NULL, '2026-01-01T00:00:00Z')",
+            rusqlite::params![name],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// Helper: assign a project to a group.
+    fn assign_project(conn: &Connection, project_name: &str, group_id: i64) {
+        conn.execute(
+            "INSERT INTO project_group_members (project_name, group_id) VALUES (?1, ?2)
+             ON CONFLICT(project_name) DO UPDATE SET group_id = excluded.group_id",
+            rusqlite::params![project_name, group_id],
+        )
+        .unwrap();
+    }
+
+    /// 2.1 Two groups with assigned projects → one series per group with correct sums.
+    #[test]
+    fn test_query_series_by_group_two_groups() {
+        let conn = test_conn();
+
+        // Create two groups.
+        let gid_backend = insert_group(&conn, "backend");
+        let gid_frontend = insert_group(&conn, "frontend");
+
+        // Assign projects.
+        assign_project(&conn, "backend/madrid", gid_backend);
+        assign_project(&conn, "frontend/app", gid_frontend);
+
+        // Insert events: backend/madrid on day 1, frontend/app on day 2.
+        let events = vec![
+            UsageEventRow {
+                dedup_key: "g1:r1",
+                session_id: "s",
+                project_path: "/p/backend/madrid",
+                project_name: "backend/madrid",
+                model: "claude-opus-4-8",
+                input_tokens: 1000,
+                output_tokens: 100,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 1100,
+                cost: 0.005,
+                timestamp: "2026-06-01T10:00:00Z",
+                git_branch: None,
+                ingested_at: "2026-06-01T10:01:00Z",
+            },
+            UsageEventRow {
+                dedup_key: "g1:r2",
+                session_id: "s",
+                project_path: "/p/frontend/app",
+                project_name: "frontend/app",
+                model: "claude-opus-4-8",
+                input_tokens: 2000,
+                output_tokens: 200,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 2200,
+                cost: 0.015,
+                timestamp: "2026-06-02T09:00:00Z",
+                git_branch: None,
+                ingested_at: "2026-06-02T09:01:00Z",
+            },
+        ];
+        for row in &events {
+            db::insert_event(&conn, row).unwrap();
+        }
+
+        let params = SeriesQuery {
+            bucket: Bucket::Day,
+            metric: Metric::Tokens,
+            series_by: SeriesBy::Group,
+            since: None,
+            until: None,
+        };
+
+        let resp = query_series_inner(&conn, &params).unwrap();
+
+        // Should have exactly 2 series: "backend" and "frontend".
+        assert_eq!(resp.series.len(), 2, "expected 2 group series");
+        let backend = resp.series.iter().find(|s| s.name == "backend").unwrap();
+        let frontend = resp.series.iter().find(|s| s.name == "frontend").unwrap();
+
+        // Day 1 (2026-06-01): backend 1100, frontend 0
+        // Day 2 (2026-06-02): backend 0, frontend 2200
+        assert_eq!(resp.buckets.len(), 2);
+        let day1 = resp
+            .buckets
+            .iter()
+            .position(|b| b.starts_with("2026-06-01"))
+            .unwrap();
+        let day2 = resp
+            .buckets
+            .iter()
+            .position(|b| b.starts_with("2026-06-02"))
+            .unwrap();
+
+        assert!((backend.points[day1] - 1100.0).abs() < 1.0);
+        assert!((backend.points[day2] - 0.0).abs() < 1.0);
+        assert!((frontend.points[day1] - 0.0).abs() < 1.0);
+        assert!((frontend.points[day2] - 2200.0).abs() < 1.0);
+    }
+
+    /// 2.2 Events from projects with no group membership collapse into "otros".
+    #[test]
+    fn test_query_series_by_group_ungrouped_otros() {
+        let conn = test_conn();
+
+        // No groups or memberships — all events go to "otros".
+        let events = vec![
+            UsageEventRow {
+                dedup_key: "g2:r1",
+                session_id: "s",
+                project_path: "/p/proj-a",
+                project_name: "proj-a",
+                model: "claude-opus-4-8",
+                input_tokens: 500,
+                output_tokens: 50,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 550,
+                cost: 0.002,
+                timestamp: "2026-06-01T10:00:00Z",
+                git_branch: None,
+                ingested_at: "2026-06-01T10:01:00Z",
+            },
+            UsageEventRow {
+                dedup_key: "g2:r2",
+                session_id: "s",
+                project_path: "/p/proj-b",
+                project_name: "proj-b",
+                model: "claude-sonnet-4-6",
+                input_tokens: 800,
+                output_tokens: 80,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 880,
+                cost: 0.003,
+                timestamp: "2026-06-01T11:00:00Z",
+                git_branch: None,
+                ingested_at: "2026-06-01T11:01:00Z",
+            },
+        ];
+        for row in &events {
+            db::insert_event(&conn, row).unwrap();
+        }
+
+        let params = SeriesQuery {
+            bucket: Bucket::Day,
+            metric: Metric::Tokens,
+            series_by: SeriesBy::Group,
+            since: None,
+            until: None,
+        };
+
+        let resp = query_series_inner(&conn, &params).unwrap();
+
+        // Only one series named "otros" with both events summed.
+        assert_eq!(resp.series.len(), 1, "expected single 'otros' series");
+        assert_eq!(resp.series[0].name, "otros");
+        let total: f64 = resp.series[0].points.iter().sum();
+        assert!(
+            (total - 1430.0).abs() < 1.0,
+            "expected 550+880=1430 tokens in 'otros'; got {total}"
+        );
+    }
+
+    /// 2.3 A project reassigned to another group is attributed to the current group.
+    #[test]
+    fn test_query_series_by_group_reassigned_project() {
+        let conn = test_conn();
+
+        let gid_old = insert_group(&conn, "old-group");
+        let gid_new = insert_group(&conn, "new-group");
+
+        // Assign project initially to old-group, then reassign to new-group.
+        assign_project(&conn, "my-project", gid_old);
+        assign_project(&conn, "my-project", gid_new); // upsert → now in new-group
+
+        let events = vec![UsageEventRow {
+            dedup_key: "g3:r1",
+            session_id: "s",
+            project_path: "/p/my-project",
+            project_name: "my-project",
+            model: "claude-opus-4-8",
+            input_tokens: 1000,
+            output_tokens: 100,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            total_tokens: 1100,
+            cost: 0.005,
+            timestamp: "2026-06-01T10:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-06-01T10:01:00Z",
+        }];
+        for row in &events {
+            db::insert_event(&conn, row).unwrap();
+        }
+
+        let params = SeriesQuery {
+            bucket: Bucket::Day,
+            metric: Metric::Tokens,
+            series_by: SeriesBy::Group,
+            since: None,
+            until: None,
+        };
+
+        let resp = query_series_inner(&conn, &params).unwrap();
+
+        // Usage must appear under "new-group", not "old-group".
+        assert!(
+            resp.series.iter().any(|s| s.name == "new-group"),
+            "expected 'new-group' series; got: {:?}",
+            resp.series.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        assert!(
+            !resp.series.iter().any(|s| s.name == "old-group"),
+            "must not have 'old-group' series after reassignment"
+        );
+        let new_group = resp.series.iter().find(|s| s.name == "new-group").unwrap();
+        let total: f64 = new_group.points.iter().sum();
+        assert!(
+            (total - 1100.0).abs() < 1.0,
+            "expected 1100 tokens in new-group; got {total}"
+        );
+    }
+
+    /// 2.4 With no memberships at all, all usage falls into a single "otros" series.
+    #[test]
+    fn test_query_series_by_group_no_memberships() {
+        let conn = test_conn();
+        seed_events(&conn);
+
+        let params = SeriesQuery {
+            bucket: Bucket::Day,
+            metric: Metric::Tokens,
+            series_by: SeriesBy::Group,
+            since: None,
+            until: None,
+        };
+
+        let resp = query_series_inner(&conn, &params).unwrap();
+
+        // All usage lands in "otros" since seed_events has no group memberships.
+        assert_eq!(resp.series.len(), 1, "expected single 'otros' series");
+        assert_eq!(resp.series[0].name, "otros");
+
+        // Total must equal the sum of all tokens in seed_events: 1100+550+2200+880 = 4730.
+        let total: f64 = resp.series[0].points.iter().sum();
+        assert!(
+            (total - 4730.0).abs() < 1.0,
+            "expected 4730 total tokens in 'otros'; got {total}"
         );
     }
 }

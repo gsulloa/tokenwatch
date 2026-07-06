@@ -1,8 +1,5 @@
-# usage-charts Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change usage-charts. Update Purpose after archive.
-## Requirements
 ### Requirement: Consulta de series temporales agregadas
 El sistema SHALL exponer un comando `query_series` que reciba una agrupación temporal (hora / día / semana / mes), una métrica (tokens totales / costo), un criterio de series (modelo / proyecto / modelo-proyecto / **grupo**) y un rango de fechas opcional (`since` / `until`), y devuelva las etiquetas de bucket ordenadas junto con una serie por grupo alineada a esos buckets. Los buckets temporales (hora/día/semana/mes) SHALL calcularse en **hora local** del sistema, aunque los eventos se almacenen y filtren en UTC. Los filtros `since` / `until` SHALL aceptar precisión de fecha y hora (datetime) para poder expresar rangos relativos exactos como las últimas 24 horas.
 
@@ -100,66 +97,3 @@ La aplicación SHALL mostrar un gráfico de **área apilada (stacked area)** con
 #### Scenario: Selección de series por grupo
 - **WHEN** el usuario elige la opción "Grupo" en el control de series
 - **THEN** el gráfico y la tabla se re-renderizan con una banda/fila por grupo (más "otros"), usando el nombre del grupo como etiqueta
-
-### Requirement: Tabla de datos con cifras exactas
-La aplicación SHALL mostrar, debajo del gráfico, una tabla con una fila por serie y una columna por bucket, presentando las cifras exactas de la métrica seleccionada (tokens o costo). La tabla SHALL incluir una columna de total por serie y una fila de total por bucket, y SHALL respetar el mismo orden y color de series que el gráfico. La columna de nombre de serie/proyecto (la primera columna) SHALL permanecer fija durante el scroll horizontal de la tabla, tanto en el encabezado como en las filas de datos y en la fila de totales.
-
-#### Scenario: Lectura de cifras exactas
-- **WHEN** el usuario mira la tabla
-- **THEN** cada celda muestra el valor exacto de la serie en ese bucket para la métrica activa (tokens sin abreviar o costo con decimales)
-
-#### Scenario: Totales por serie y por bucket
-- **WHEN** hay más de una serie o más de un bucket
-- **THEN** la tabla muestra un total por cada serie (columna) y un total por cada bucket (fila)
-
-#### Scenario: Consistencia con el gráfico
-- **WHEN** el gráfico muestra un color y orden para una serie
-- **THEN** la fila correspondiente en la tabla usa el mismo color de identificación y el mismo orden
-
-#### Scenario: Columna de nombre fija al scrollear horizontalmente
-- **WHEN** la tabla tiene más buckets de los que caben y el usuario hace scroll horizontal
-- **THEN** la primera columna (nombre de serie/proyecto) permanece visible y fija a la izquierda mientras las columnas numéricas se desplazan por debajo, sin transparencias ni solapamientos ilegibles
-
-### Requirement: Vista de dashboard con tarjetas de resumen
-La aplicación SHALL presentar la vista de uso como un dashboard: una barra superior fija (nombre y subtítulo, marca de tiempo del último refresh y botón de actualizar), una fila de tarjetas KPI de resumen, una toolbar con los controles, y paneles tipo card para el gráfico y la tabla. Las tarjetas KPI SHALL mostrar al menos el total de la métrica seleccionada, el número de series, el número de períodos (buckets), el número de eventos y el rango de fechas de los datos.
-
-#### Scenario: KPIs reflejan la selección actual
-- **WHEN** el usuario cambia de métrica o de agrupación de series/período
-- **THEN** las tarjetas de resumen se actualizan (p.ej. la tarjeta de total muestra "Total tokens" o "Costo total" según la métrica)
-
-#### Scenario: Dashboard sin datos
-- **WHEN** no hay datos de uso disponibles
-- **THEN** las tarjetas muestran valores neutros ("—" o 0) y el panel del gráfico muestra el estado vacío, sin errores de render
-
-### Requirement: Ventana redimensionable y pantalla completa
-La aplicación SHALL abrirse en una ventana de tamaño de dashboard y permitir redimensionarla y llevarla a pantalla completa.
-
-#### Scenario: Redimensionar y maximizar
-- **WHEN** el usuario arrastra el borde de la ventana o usa el control de pantalla completa
-- **THEN** la ventana se redimensiona y el dashboard se adapta de forma responsiva sin romper el layout
-
-### Requirement: Tema de color según preferencia del sistema
-La aplicación SHALL aplicar un tema de color (claro u oscuro) según la preferencia del sistema operativo, y SHALL reaccionar a los cambios de esa preferencia en caliente, de modo que todos los tokens de estilo estén definidos y la interfaz sea legible.
-
-#### Scenario: Preferencia oscura del sistema
-- **WHEN** el sistema está en modo oscuro
-- **THEN** la aplicación se renderiza con el tema oscuro (fondos, bordes y texto legibles)
-
-#### Scenario: Cambio de preferencia en caliente
-- **WHEN** el usuario cambia la preferencia de color del sistema mientras la app está abierta
-- **THEN** la aplicación actualiza el tema sin necesidad de reiniciarse
-
-### Requirement: Costo mostrado como estimado
-La aplicación SHALL indicar de forma visible que los valores de costo son estimados.
-
-#### Scenario: Nota de estimación visible
-- **WHEN** la métrica seleccionada es costo
-- **THEN** la UI muestra una nota de que el costo es estimado
-
-### Requirement: Refresco automático ante nuevos datos
-La aplicación SHALL escuchar el evento `usage-updated` y volver a consultar las series cuando llegue, además de mostrar la marca de tiempo del último refresh.
-
-#### Scenario: Llega usage-updated
-- **WHEN** el backend emite `usage-updated`
-- **THEN** el frontend re-consulta y actualiza el gráfico y el último refresh
-

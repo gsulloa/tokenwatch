@@ -84,13 +84,27 @@ El popover SHALL mostrar el consumo del día actual desglosado por proyecto, ind
 - **THEN** el popover muestra un estado vacío en la sección por proyecto
 
 ### Requirement: Refresco al abrir el popover
-La aplicación SHALL consultar `query_limits` y `query_today_by_project` al mostrarse el popover, para reflejar datos frescos sin esperar al siguiente ciclo de poll, y SHALL además escuchar los eventos `limits-updated` y `usage-updated`.
+Cada vez que el popover se muestre, el frontend SHALL solicitar datos recién obtenidos —un snapshot de límites (vía `query_limits`, que consulta la API de uso en vivo) y el consumo por proyecto del día (vía `query_today_by_project`)— de modo que los medidores de sesión/semana y el desglose por proyecto reflejen datos actuales al abrir, sin esperar al siguiente ciclo de poll. Dado que el webview del popover persiste entre aperturas, este refresco SHALL dispararse a partir del evento `popover-shown` (no solo al montar el componente). El refresco al abrir SHALL ser adicional e independiente del ciclo de polling en segundo plano, el cual MUST permanecer sin cambios como mecanismo que dispara las notificaciones de umbral. La app SHALL además escuchar los eventos `limits-updated` y `usage-updated` para actualizarse ante datos empujados por el backend.
 
-#### Scenario: Refresco inmediato al abrir
-- **WHEN** el usuario abre el popover
-- **THEN** la app consulta límites y consumo por proyecto de inmediato y actualiza la vista
+Para los límites, mientras la nueva consulta está en curso, el popover MUST seguir mostrando el último snapshot conocido (no debe quedar en blanco ni parpadear), y SHALL reemplazar los valores en su lugar cuando la consulta fresca se resuelva con éxito. Para evitar llamadas redundantes ante aperturas/cierres rápidos, el refresco de límites al abrir SHALL respetar un intervalo mínimo entre consultas: si una consulta exitosa se completó dentro de esa ventana reciente, la apertura MUST omitir la nueva consulta de límites y conservar los valores mostrados.
+
+#### Scenario: Datos frescos al abrir
+- **WHEN** el usuario abre el popover y ha pasado más que el intervalo mínimo desde la última consulta de límites
+- **THEN** el frontend consulta `query_limits` y `query_today_by_project` y actualiza los medidores y el consumo por proyecto con los datos recién obtenidos
+
+#### Scenario: Sin parpadeo mientras carga
+- **WHEN** el usuario abre el popover con un snapshot de límites previo ya mostrado y la nueva consulta está en curso
+- **THEN** los medidores siguen mostrando los valores previos hasta que la consulta fresca se resuelve, sin quedar en blanco
+
+#### Scenario: Aperturas rápidas no duplican consultas de límites
+- **WHEN** el usuario abre y cierra el popover repetidamente dentro del intervalo mínimo entre consultas
+- **THEN** solo se realiza una consulta de límites y las aperturas siguientes reutilizan los valores ya mostrados
 
 #### Scenario: Refresco por nuevos datos de uso
 - **WHEN** el backend emite `usage-updated`
 - **THEN** la sección de consumo por proyecto del día se vuelve a consultar y actualizar
+
+#### Scenario: El polling sigue impulsando notificaciones
+- **WHEN** transcurre el intervalo de polling en segundo plano
+- **THEN** el ciclo de polling continúa obteniendo el snapshot, evaluando umbrales y disparando notificaciones, independientemente de si el popover se abrió o no
 
