@@ -23,6 +23,7 @@ export default defineConfig(async () => ({
       "@/assets": path.resolve(__dirname, "src/assets"),
       "@/features": path.resolve(__dirname, "src/features"),
       "@/generated": path.resolve(__dirname, "src/generated"),
+      "@/components": path.resolve(__dirname, "src/components"),
     },
   },
 }));

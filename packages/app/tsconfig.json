@@ -25,7 +25,8 @@
       "@/styles/*": ["src/styles/*"],
       "@/assets/*": ["src/assets/*"],
       "@/features/*": ["src/features/*"],
-      "@/generated/*": ["src/generated/*"]
+      "@/generated/*": ["src/generated/*"],
+      "@/components/*": ["src/components/*"]
     }
   },
   "include": ["src"],
