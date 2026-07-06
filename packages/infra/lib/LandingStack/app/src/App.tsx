@@ -159,15 +159,6 @@ function pickPrimary(
   return first ? { key: first[0], installer: first[1] } : undefined;
 }
 
-/** Human-readable label + file extension for a platform key. */
-function platformMeta(key: string): { label: string; ext: string } {
-  if (key === "darwin-aarch64") return { label: "macOS (Apple Silicon)", ext: ".dmg" };
-  if (key === "darwin-x86_64") return { label: "macOS (Intel)", ext: ".dmg" };
-  if (key === "windows-x86_64") return { label: "Windows", ext: ".msi" };
-  if (key === "linux-x86_64") return { label: "Linux", ext: ".AppImage" };
-  return { label: key, ext: "" };
-}
-
 /* ── Skeleton helpers ──────────────────────────────────────────────────── */
 
 function Skel({ w, h, className }: { w?: string; h?: string; className?: string }) {
@@ -202,17 +193,6 @@ function DownloadCardSkeleton() {
     </div>
   );
 }
-
-/* ── Content data ──────────────────────────────────────────────────────── */
-
-const SOURCES = [
-  { name: "PostgreSQL", desc: "Full feature set — schema browser, virtualized grid, inline edits, SQL editor, structure viewer." },
-  { name: "MySQL / MariaDB", desc: "MySQL ≥ 5.7, MariaDB ≥ 10.5. Multi-statement runs, inline editing, structure viewer." },
-  { name: "SQL Server", desc: "2017+, Azure SQL & Managed Instance. GO batch support in the editor." },
-  { name: "DynamoDB", desc: "Table browsing, item scanning, and per-connection physical-name normalization." },
-  { name: "CloudWatch Logs", desc: "Log group and stream browsing with querying across your accounts." },
-  { name: "Athena", desc: "Serverless SQL over S3 — Glue-backed schema, bytes-scanned cost, CSV / JSONL / XLSX export." },
-];
 
 /* ── Reveal-on-scroll hook ─────────────────────────────────────────────── */
 
@@ -291,13 +271,6 @@ export default function App() {
   );
   const primary = primaryResult?.installer;
   const primaryKey = primaryResult?.key ?? "darwin-aarch64";
-  const { label: primaryLabel, ext: primaryExt } = platformMeta(primaryKey);
-
-  // Choose the right glyph for the hero CTA
-  const HeroGlyph =
-    os.current === "windows" ? WindowsLogo :
-    os.current === "linux"   ? LinuxLogo   :
-    AppleLogo;
 
   // Legal page routing — after all hooks to satisfy Rules of Hooks
   if (path === "/privacy") return (
@@ -317,10 +290,10 @@ export default function App() {
 
   // Per-card meta: title, sub, glyph, ext
   function cardMeta(key: string): { title: string; sub: string; Glyph: ComponentType<{ size?: number }>; ext: string } {
-    if (key === "darwin-aarch64") return { title: "Apple Silicon", sub: "M1, M2, M3 and later", Glyph: AppleLogo, ext: ".dmg" };
-    if (key === "darwin-x86_64")  return { title: "Intel",         sub: "x86-64 Macs",         Glyph: AppleLogo, ext: ".dmg" };
-    if (key === "windows-x86_64") return { title: "Windows",       sub: "x86-64 · Windows 10+", Glyph: WindowsLogo, ext: ".msi" };
-    return                               { title: "Linux",         sub: "x86-64 AppImage",     Glyph: LinuxLogo,   ext: ".AppImage" };
+    if (key === "darwin-aarch64") return { title: "Apple Silicon", sub: "M1, M2, M3 and later",     Glyph: AppleLogo, ext: ".dmg" };
+    if (key === "darwin-x86_64")  return { title: "Intel",         sub: "x86-64 Macs",              Glyph: AppleLogo, ext: ".dmg" };
+    if (key === "windows-x86_64") return { title: "Windows",       sub: "x86-64 · Windows 10+",     Glyph: WindowsLogo, ext: ".msi" };
+    return                               { title: "Linux",         sub: "x86-64 AppImage",           Glyph: LinuxLogo,   ext: ".AppImage" };
   }
 
   return (
@@ -337,8 +310,8 @@ export default function App() {
               TokenWatch
             </a>
             <div className="nav-links">
-              <a href="#sources">Sources</a>
-              <a href="#console">The console</a>
+              <a href="#how">How it works</a>
+              <a href="#dashboard">The dashboard</a>
               <a href="#features">Features</a>
               <span className="version-pill">
                 <span className="dot" />
@@ -361,28 +334,25 @@ export default function App() {
             <div className="hero-copy">
               <span className="hero-tag">
                 <span className="chip">TokenWatch</span>
-                The hundred-eyed watchman, for your data
+                Your fuel gauge for Claude
               </span>
               <h1>
-                A hundred eyes on
-                <br />
-                every <span className="glow">database</span>.
+                Never get{" "}
+                <span className="accent-word">rate-limited</span>{" "}
+                mid-task again.
               </h1>
               <p className="lede">
-                TokenWatch is a precision desktop client for inspecting and editing
-                data across <strong>Postgres, MySQL, SQL&nbsp;Server, DynamoDB,
-                CloudWatch</strong> and <strong>Athena</strong> — one watchful,
-                command-palette-driven console for all of it.
+                TokenWatch lives in your macOS menu bar and monitors Claude token usage per project and workspace. Live session (5h) and weekly limit gauges, per-group budgets, and alerts before you hit the cap — no cloud, no telemetry.
               </p>
 
               <div className="cta-row">
                 {state.status === "ready" ? (
                   <a className="btn-download" href={primary?.url}>
-                    <HeroGlyph />
+                    <AppleLogo />
                     <span className="bd-text">
-                      Download for {primaryLabel}
+                      Download for macOS
                       <span className="bd-meta">
-                        {primaryExt} · {primary ? fmtSize(primary.size) : "—"}
+                        .dmg · {primary ? fmtSize(primary.size) : "—"}
                       </span>
                     </span>
                   </a>
@@ -395,8 +365,8 @@ export default function App() {
                     </span>
                   </span>
                 )}
-                <a className="btn-ghost" href="#download">
-                  All downloads <Arrow />
+                <a className="btn-ghost" href="#how">
+                  How it works <Arrow />
                 </a>
               </div>
 
@@ -419,139 +389,162 @@ export default function App() {
               </div>
             </div>
 
-            {/* App mockup */}
+            {/* Popover Mockup */}
             <div className="mockup-wrap">
-              <AppMockup />
+              <PopoverMockup />
             </div>
           </div>
         </header>
 
-        {/* ── Sources ── */}
-        <section className="section" id="sources">
+        {/* ── How it works ── */}
+        <section className="section" id="how">
           <div className="container">
             <div className="section-head reveal">
               <span className="eyebrow">
-                <span className="accent">06</span> &nbsp;Sources, one console
+                <span className="accent">01</span> &nbsp;How it works
               </span>
-              <h2>Six engines. No context-switching.</h2>
+              <h2>Reads your logs. Never touches the network.</h2>
               <p>
-                Postgres to Athena, every source lives behind the same
-                three-pane shell, the same keyboard shortcuts, the same grid.
-                Learn it once.
+                TokenWatch parses Claude Code's local logs and computes your usage. No keys to configure, no telemetry, no cloud — your data never leaves your Mac.
               </p>
             </div>
             <div className="sources reveal">
-              {SOURCES.map((s, i) => (
-                <div className="source" key={s.name}>
-                  <span className="source-idx">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <div className="source-name">{s.name}</div>
-                  <div className="source-desc">{s.desc}</div>
-                </div>
-              ))}
+              <div className="source">
+                <span className="source-idx">01</span>
+                <div className="source-name">Reads <code>~/.claude/projects</code></div>
+                <div className="source-desc">Parses the <code>.jsonl</code> from each Claude Code session and dedupes by message. All processing happens on your machine.</div>
+              </div>
+              <div className="source">
+                <span className="source-idx">02</span>
+                <div className="source-name">Refreshes every <code>30 s</code></div>
+                <div className="source-desc">Incremental ingest: only re-reads files that changed. Near-zero overhead in the background.</div>
+              </div>
+              <div className="source">
+                <span className="source-idx">03</span>
+                <div className="source-name">Groups by project and model</div>
+                <div className="source-desc">Attributes tokens and cost to each workspace, with normalized Conductor names.</div>
+              </div>
+              <div className="source">
+                <span className="source-idx">04</span>
+                <div className="source-name">Prices Opus · Sonnet · Haiku</div>
+                <div className="source-desc">Converts tokens —including cache— to USD using each model's current rate table.</div>
+              </div>
             </div>
           </div>
         </section>
 
-        {/* ── The console (mockup callout) ── */}
-        <section className="section" id="console">
+        {/* ── The dashboard ── */}
+        <section className="section" id="dashboard">
           <div className="container">
             <div className="section-head reveal">
               <span className="eyebrow">
-                <span className="accent">▱</span> &nbsp;The console
+                <span className="accent">02</span> &nbsp;The dashboard
               </span>
-              <h2>A precision instrument that pays attention.</h2>
+              <h2>Every token, on its chart.</h2>
               <p>
-                Sidebar, virtualized data grid, inspector. Tabular numerals,
-                hairline dividers, and a single violet accent that only shows up
-                where it matters — the active row, the live connection, the
-                primary key.
+                Open the cost dashboard for historical analysis: stacked time series by model or by project, range filters (24 h, 7 d, 30 d, month, or custom), and a table that balances like a ledger.
               </p>
             </div>
-            <div className="mockup-wrap reveal" style={{ maxWidth: 920, margin: "0 auto" }}>
-              <AppMockup wide />
+            <div className="mockup-wrap reveal dashboard-wrap">
+              <DashboardMockup />
             </div>
           </div>
         </section>
 
-        {/* ── Features bento ── */}
+        {/* ── Features ── */}
         <section className="section" id="features">
           <div className="container">
             <div className="section-head reveal">
               <span className="eyebrow">
-                <span className="accent">✦</span> &nbsp;What's inside
+                <span className="accent">03</span> &nbsp;What's inside
               </span>
-              <h2>Built for people who live in databases.</h2>
+              <h2>A cockpit instrument for your quota.</h2>
             </div>
 
             <div className="bento reveal">
+              {/* Live limits — span-3 */}
               <div className="feat span-3">
-                <span className="ftag">Data grid</span>
-                <h3>Virtualized grid, inline editing</h3>
+                <span className="ftag">Live limits</span>
+                <h3>Session and week gauges</h3>
                 <p>
-                  Scroll millions of rows without a stutter. Edit a cell in
-                  place, see the diff, commit when you're ready. Column widths
-                  are type-derived and persist per relation.
+                  Reads your 5-hour and weekly limits from Anthropic's API. Rails with thresholds at 70/85/100 and a pace marker: you know at a glance whether you're cruising or at the edge.
                 </p>
-              </div>
-
-              <div className="feat span-3">
-                <span className="ftag">SQL editor</span>
-                <h3>Multi-statement, batch-aware</h3>
-                <p>
-                  Run scripts with <code>GO</code> batches on SQL Server,
-                  multi-statement runs everywhere else, and live bytes-scanned
-                  cost on Athena.
-                </p>
-                <div className="feat-sql">
-                  <div><span className="cm">-- recent high-value orders</span></div>
-                  <div>
-                    <span className="kw">SELECT</span> id, amount, status
+                <div className="feat-gauge-ornament">
+                  <div className="fgo-label">SESSION 5H</div>
+                  <div className="fgo-track">
+                    <div className="fgo-fill" style={{ width: "72%", background: "var(--watch)" }} />
+                    <div className="fgo-tick" style={{ left: "70%" }} />
+                    <div className="fgo-tick" style={{ left: "85%" }} />
+                    <div className="fgo-tick" style={{ left: "100%" }} />
+                    <div className="fgo-pace" style={{ left: "68%" }} />
                   </div>
-                  <div>
-                    <span className="kw">FROM</span> orders
-                  </div>
-                  <div>
-                    <span className="kw">WHERE</span> amount {">"} <span className="fn">2000</span> <span className="kw">ORDER BY</span> created <span className="kw">DESC</span>;
+                  <div className="fgo-meta">
+                    <span className="fgo-pct" style={{ color: "var(--watch)" }}>72%</span>
+                    <span className="fgo-reset">Resets in 1h 24m</span>
                   </div>
                 </div>
               </div>
 
-              <div className="feat span-2">
-                <span className="ftag">Command palette</span>
-                <h3>Everything is a keystroke</h3>
-                <div className="feat-palette">
-                  <div className="pp-input">
-                    <span className="caret">⌘K</span> connect prod…
+              {/* By model — span-3 */}
+              <div className="feat span-3">
+                <span className="ftag">By model</span>
+                <h3>Weekly breakdown Opus · Sonnet · Haiku</h3>
+                <p>
+                  Each model eats your weekly quota separately. See which one is burning through it before it stops you.
+                </p>
+                <div className="feat-model-gauges">
+                  <div className="fmg-row">
+                    <span className="fmg-name">Opus</span>
+                    <div className="fmg-track">
+                      <div className="fmg-fill" style={{ width: "84%", background: "var(--danger)" }} />
+                      <div className="fmg-tick" style={{ left: "70%" }} />
+                      <div className="fmg-tick" style={{ left: "85%" }} />
+                    </div>
+                    <span className="fmg-pct" style={{ color: "var(--danger)" }}>84%</span>
                   </div>
-                  <div className="pp-row on">
-                    Connect: prod-postgres <span className="kbd">↵</span>
+                  <div className="fmg-row">
+                    <span className="fmg-name">Sonnet</span>
+                    <div className="fmg-track">
+                      <div className="fmg-fill" style={{ width: "61%", background: "var(--watch)" }} />
+                      <div className="fmg-tick" style={{ left: "70%" }} />
+                    </div>
+                    <span className="fmg-pct" style={{ color: "var(--watch)" }}>61%</span>
                   </div>
-                  <div className="pp-row">
-                    Run query <span className="kbd">⌘↵</span>
-                  </div>
-                  <div className="pp-row">
-                    Focus chat panel <span className="kbd">⌘J</span>
+                  <div className="fmg-row">
+                    <span className="fmg-name">Haiku</span>
+                    <div className="fmg-track">
+                      <div className="fmg-fill" style={{ width: "22%", background: "var(--safe)" }} />
+                      <div className="fmg-tick" style={{ left: "70%" }} />
+                    </div>
+                    <span className="fmg-pct" style={{ color: "var(--safe)" }}>22%</span>
                   </div>
                 </div>
               </div>
 
+              {/* Budgets — span-2 */}
               <div className="feat span-2">
-                <span className="ftag">Context folders</span>
-                <h3>The folder is the project</h3>
+                <span className="ftag">Budgets</span>
+                <h3>Caps per project group</h3>
                 <p>
-                  Link a connection to a folder of structured docs and prefab
-                  queries. One root, every engine — schema sync keeps it honest.
+                  Group projects and give them a cap: a percentage of the session or an absolute USD amount. Automatic alerts at 50, 70, and 80%.
                 </p>
               </div>
 
+              {/* Alerts — span-2 */}
               <div className="feat span-2">
-                <span className="ftag">AI providers</span>
-                <h3>Grounded SQL generation</h3>
+                <span className="ftag">Alerts</span>
+                <h3>A heads-up before the cap</h3>
                 <p>
-                  Claude Code, Codex CLI, or the Anthropic & OpenAI APIs — the
-                  context folder rides along so generated SQL knows your schema.
+                  Native macOS notification as you approach the limit. Mute it with one tap when you're in focus mode.
+                </p>
+              </div>
+
+              {/* Auto-updates — span-2 */}
+              <div className="feat span-2">
+                <span className="ftag">Always current</span>
+                <h3>Automatic updates</h3>
+                <p>
+                  Updates itself from signed releases. Always the latest version, no friction.
                 </p>
               </div>
             </div>
@@ -563,13 +556,13 @@ export default function App() {
           <div className="container">
             <div className="section-head reveal" style={{ marginInline: "auto", textAlign: "center", maxWidth: 560 }}>
               <span className="eyebrow">
-                <span className="accent">↓</span> &nbsp;Download
+                <span className="accent">04</span> &nbsp;Download
               </span>
-              <h2>Get TokenWatch.</h2>
+              <h2>Download TokenWatch.</h2>
               <p>
                 {state.status === "ready"
-                  ? <>Signed installers for macOS, Windows, and Linux. Free, version {manifest!.version}.</>
-                  : <>Signed installers for macOS, Windows, and Linux. Free.</>
+                  ? <>For macOS (Apple Silicon or Intel). Free, version {manifest!.version}.</>
+                  : <>For macOS (Apple Silicon or Intel). Free.</>
                 }
               </p>
             </div>
@@ -577,8 +570,6 @@ export default function App() {
             <div className="dl-cards reveal">
               {state.status === "loading" && (
                 <>
-                  <DownloadCardSkeleton />
-                  <DownloadCardSkeleton />
                   <DownloadCardSkeleton />
                   <DownloadCardSkeleton />
                 </>
@@ -599,7 +590,7 @@ export default function App() {
               })}
               {state.status === "error" && (
                 <div className="dl-error">
-                  <p>Downloads are currently unavailable — please refresh or try again.</p>
+                  <p>Downloads aren't available right now — reload or try again.</p>
                   <button
                     className="dl-retry-btn"
                     onClick={() => loadManifest()}
@@ -627,7 +618,7 @@ export default function App() {
                   <span>·</span>
                 </>
               )}
-              <span>macOS 11+ · Windows 10+ · glibc 2.17+</span>
+              <span>macOS 11+ · Apple Silicon or Intel</span>
             </div>
           </div>
         </section>
@@ -640,8 +631,8 @@ export default function App() {
               TokenWatch
             </a>
             <div className="footer-meta">
-              <a href="#sources">Sources</a>
-              <a href="#console">Console</a>
+              <a href="#how">How it works</a>
+              <a href="#dashboard">The dashboard</a>
               <a href="#features">Features</a>
               <a href="#download">Download</a>
               <a href="/privacy">Privacy</a>
@@ -696,134 +687,258 @@ function DownloadCard({
   );
 }
 
-/* ── Three-pane app mockup ─────────────────────────────────────────────── */
+/* ── Popover Mockup (Mockup A — hero) ──────────────────────────────────── */
 
-const ROWS = [
-  { id: "8f2a", name: "Aurora Voss", amt: "2,480.00", pill: "paid" },
-  { id: "1c7d", name: "Marcus Lindqvist", amt: "318.50", pill: "pending" },
-  { id: "44b0", name: "Priya Raman", amt: "5,902.10", pill: "paid", active: true },
-  { id: "9e31", name: "Tomás Herrera", amt: "74.00", pill: "refund" },
-  { id: "0a5f", name: "Naoko Ishida", amt: "1,205.75", pill: "paid" },
-  { id: "d217", name: "Eli Brandt", amt: "640.20", pill: "pending" },
-  { id: "6b88", name: "Zara Okafor", amt: "9,310.00", pill: "paid" },
-  { id: "3f49", name: "Lukas Meyer", amt: "212.40", pill: "paid" },
-];
-
-function AppMockup({ wide = false }: { wide?: boolean }) {
+function PopoverMockup() {
   return (
-    <div className="mockup" role="img" aria-label="TokenWatch three-pane interface">
-      <div className="mk-titlebar">
-        <div className="mk-traffic">
-          <span /><span /><span />
+    <div className="mockup popover-mockup" role="img" aria-label="TokenWatch menu-bar popover">
+      {/* Top strip */}
+      <div className="pop-topbar">
+        <div className="pop-brand">
+          <Eye size={18} />
+          <span className="pop-wordmark">TokenWatch</span>
         </div>
-        <span className="mk-conn">
-          <span className="dot" />
-          prod-postgres · public
-        </span>
+        <span className="pop-updated">UPDATED 14:32</span>
       </div>
 
-      <div className="mk-body">
-        {/* Sidebar */}
-        <aside className="mk-sidebar">
-          <div className="mk-side-label">Connections</div>
-          <div className="mk-side-item">
-            <Dot /> analytics
+      {/* Gauges */}
+      <div className="pop-gauges">
+        {/* Session 5h gauge */}
+        <div className="pop-gauge">
+          <div className="pop-gauge-header">
+            <span className="pop-gauge-label">SESSION 5H</span>
+            <span className="pop-gauge-pct watch">62%</span>
           </div>
-          <div className="mk-side-item">
-            <Dot /> staging
+          <div className="pop-rail">
+            <div className="pop-fill watch" style={{ width: "62%" }} />
+            <div className="pop-tick" style={{ left: "70%" }} />
+            <div className="pop-tick" style={{ left: "85%" }} />
+            <div className="pop-tick end" style={{ left: "100%" }} />
+            <div className="pop-pace" style={{ left: "58%" }} />
           </div>
-          <div className="mk-side-label">Tables</div>
-          <div className="mk-side-item">
-            <Tbl /> customers
-          </div>
-          <div className="mk-side-item active">
-            <Tbl /> orders
-          </div>
-          <div className="mk-side-item">
-            <Tbl /> invoices
-          </div>
-          <div className="mk-side-item">
-            <Tbl /> events
-          </div>
-          <div className="mk-side-item">
-            <Tbl /> sessions
-          </div>
-        </aside>
+          <div className="pop-gauge-meta">Resets in 2h 47m</div>
+        </div>
 
-        {/* Main grid */}
-        <main className="mk-main">
-          <div className="mk-tabs">
-            <div className="mk-tab active">orders</div>
-            <div className="mk-tab">SQL editor</div>
+        {/* Weekly gauge */}
+        <div className="pop-gauge">
+          <div className="pop-gauge-header">
+            <span className="pop-gauge-label">WEEK</span>
+            <span className="pop-gauge-pct safe">38%</span>
           </div>
-          <div className="mk-grid">
-            <div className="mk-row head">
-              <span>#</span>
-              <span>customer</span>
-              <span style={{ textAlign: "right" }}>amount</span>
-              <span style={{ justifySelf: "end" }}>status</span>
-            </div>
-            {ROWS.map((r) => (
-              <div className={`mk-row${r.active ? " active" : ""}`} key={r.id}>
-                <span className="mk-cell-id">{r.id}</span>
-                <span className="mk-cell-name">{r.name}</span>
-                <span className="mk-cell-amt">{r.amt}</span>
-                <span
-                  className={`mk-pill ${
-                    r.pill === "paid"
-                      ? "paid"
-                      : r.pill === "pending"
-                      ? "pending"
-                      : "refund"
-                  }`}
-                >
-                  {r.pill}
-                </span>
-              </div>
-            ))}
+          <div className="pop-rail">
+            <div className="pop-fill safe" style={{ width: "38%" }} />
+            <div className="pop-tick" style={{ left: "70%" }} />
+            <div className="pop-tick" style={{ left: "85%" }} />
+            <div className="pop-tick end" style={{ left: "100%" }} />
+            <div className="pop-pace" style={{ left: "44%" }} />
           </div>
-        </main>
+          <div className="pop-gauge-meta">Resets in 4d 6h</div>
+        </div>
+      </div>
 
-        {/* Inspector */}
-        <aside className="mk-inspector">
-          <div className="mk-insp-title">Row · orders</div>
-          <div className="mk-field">
-            <div className="k">
-              id <span className="pk">PK</span>
-            </div>
-            <div className="v mono">44b0-9c1e-7af2</div>
+      {/* Budgets section */}
+      <div className="pop-section">
+        <div className="pop-section-label">BUDGETS</div>
+        <div className="pop-budget-row">
+          <span className="pop-budget-name">Agents</span>
+          <div className="pop-budget-rail">
+            <div className="pop-budget-fill safe" style={{ width: "42%" }} />
           </div>
-          <div className="mk-field">
-            <div className="k">customer</div>
-            <div className="v">Priya Raman</div>
+          <span className="pop-budget-cost safe">$4.20 <span className="est">est.</span></span>
+        </div>
+        <div className="pop-budget-row">
+          <span className="pop-budget-name">Landing</span>
+          <div className="pop-budget-rail">
+            <div className="pop-budget-fill watch" style={{ width: "71%" }} />
           </div>
-          <div className="mk-field">
-            <div className="k">amount</div>
-            <div className="v mono">5,902.10</div>
+          <span className="pop-budget-cost watch">$8.91 <span className="est">est.</span></span>
+        </div>
+      </div>
+
+      {/* Today by project */}
+      <div className="pop-section">
+        <div className="pop-section-label">TODAY BY PROJECT</div>
+        <div className="pop-proj-row">
+          <span className="pop-proj-name">algiers-v1</span>
+          <div className="pop-proj-bar-wrap">
+            <div className="pop-proj-bar" style={{ width: "48%" }} />
           </div>
-          <div className="mk-field">
-            <div className="k">status</div>
-            <div className="v">paid</div>
+          <span className="pop-proj-tokens">1.2M</span>
+          <span className="pop-proj-pct">48%</span>
+        </div>
+        <div className="pop-proj-row">
+          <span className="pop-proj-name">infra</span>
+          <div className="pop-proj-bar-wrap">
+            <div className="pop-proj-bar" style={{ width: "33%" }} />
           </div>
-          <div className="mk-field">
-            <div className="k">created_at</div>
-            <div className="v mono">2026-06-14 09:21</div>
+          <span className="pop-proj-tokens">820K</span>
+          <span className="pop-proj-pct">33%</span>
+        </div>
+        <div className="pop-proj-row">
+          <span className="pop-proj-name">landing</span>
+          <div className="pop-proj-bar-wrap">
+            <div className="pop-proj-bar" style={{ width: "19%" }} />
           </div>
-        </aside>
+          <span className="pop-proj-tokens">470K</span>
+          <span className="pop-proj-pct">19%</span>
+        </div>
+      </div>
+
+      {/* Command row */}
+      <div className="pop-commands">
+        <div className="pop-mute-toggle">
+          <div className="pop-toggle-pill">
+            <div className="pop-toggle-dot" />
+          </div>
+          <span className="pop-mute-label">Mute alerts</span>
+        </div>
+        <a className="pop-dashboard-btn" href="#dashboard">Dashboard</a>
       </div>
     </div>
   );
 }
 
-const Dot = () => (
-  <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-    <circle cx="12" cy="12" r="7" />
-  </svg>
-);
+/* ── Dashboard Mockup (Mockup B — #dashboard section) ──────────────────── */
 
-const Tbl = () => (
-  <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-    <rect x="3" y="4" width="18" height="16" rx="1.5" />
-    <path d="M3 9h18M9 9v11" />
-  </svg>
-);
+function DashboardMockup() {
+  return (
+    <div className="mockup dashboard-mockup" role="img" aria-label="TokenWatch dashboard de costos">
+      {/* Titlebar */}
+      <div className="mk-titlebar">
+        <div className="mk-traffic">
+          <span /><span /><span />
+        </div>
+        <span className="mk-conn">TokenWatch · Cost dashboard</span>
+      </div>
+
+      {/* Instrument readouts (inline, not boxed) */}
+      <div className="dash-readouts">
+        <div className="dash-readout">
+          <span className="dash-num">12.4M</span>
+          <span className="dash-readout-label">TOKENS IN RANGE</span>
+        </div>
+        <div className="dash-sep" />
+        <div className="dash-readout">
+          <span className="dash-num">$182.40</span>
+          <span className="dash-readout-label">COST</span>
+        </div>
+        <div className="dash-sep" />
+        <div className="dash-readout">
+          <span className="dash-num">5</span>
+          <span className="dash-readout-label">SERIES</span>
+        </div>
+        <div className="dash-sep" />
+        <div className="dash-readout">
+          <span className="dash-num">7d</span>
+          <span className="dash-readout-label">RANGE</span>
+        </div>
+      </div>
+
+      {/* Chart panel */}
+      <div className="dash-chart-panel">
+        {/* Y-axis labels */}
+        <div className="dash-yaxis">
+          <span>4M</span>
+          <span>3M</span>
+          <span>2M</span>
+          <span>1M</span>
+          <span>0</span>
+        </div>
+        {/* Chart area with inline SVG */}
+        <div className="dash-chart-area">
+          <svg viewBox="0 0 620 140" preserveAspectRatio="none" className="dash-chart-svg">
+            {/* Grid lines */}
+            <line x1="0" y1="35" x2="620" y2="35" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+            <line x1="0" y1="70" x2="620" y2="70" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+            <line x1="0" y1="105" x2="620" y2="105" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+            {/* Series 1 — accent (Opus) */}
+            <path
+              d="M0,120 C40,110 80,95 120,85 C160,75 200,60 240,55 C280,50 320,45 360,40 C400,35 440,38 480,32 C520,28 580,22 620,18 L620,140 L0,140 Z"
+              fill="rgba(170,65,246,0.25)"
+              stroke="#AA41F6"
+              strokeWidth="1.5"
+            />
+            {/* Series 2 — info (Sonnet) */}
+            <path
+              d="M0,128 C40,122 80,118 120,112 C160,106 200,100 240,96 C280,92 320,88 360,85 C400,82 440,80 480,78 C520,76 580,72 620,70 L620,140 L0,140 Z"
+              fill="rgba(96,165,250,0.18)"
+              stroke="#60A5FA"
+              strokeWidth="1.5"
+            />
+            {/* Series 3 — muted (Haiku) */}
+            <path
+              d="M0,135 C80,133 160,130 240,128 C320,126 400,124 480,122 C540,121 580,120 620,119 L620,140 L0,140 Z"
+              fill="rgba(154,150,168,0.10)"
+              stroke="rgba(154,150,168,0.4)"
+              strokeWidth="1"
+            />
+            {/* Cursor probe line */}
+            <line x1="400" y1="0" x2="400" y2="140" stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeDasharray="3,3" />
+            <circle cx="400" cy="35" r="3" fill="#AA41F6" />
+            <circle cx="400" cy="82" r="3" fill="#60A5FA" />
+            <circle cx="400" cy="123" r="3" fill="rgba(154,150,168,0.7)" />
+          </svg>
+          {/* X-axis ticks */}
+          <div className="dash-xaxis">
+            <span>Jun 30</span>
+            <span>Jul 1</span>
+            <span>Jul 2</span>
+            <span>Jul 3</span>
+            <span>Jul 4</span>
+            <span>Jul 5</span>
+            <span>Jul 6</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Ledger table */}
+      <div className="dash-table">
+        <div className="dash-table-head">
+          <span>SERIES</span>
+          <span className="num">JUN 30</span>
+          <span className="num">JUL 1</span>
+          <span className="num">JUL 2</span>
+          <span className="num">JUL 3</span>
+          <span className="num dash-hide-sm">JUL 4</span>
+          <span className="num dash-hide-sm">TOTAL</span>
+        </div>
+        <div className="dash-table-row">
+          <span className="dash-series-dot accent">Opus</span>
+          <span className="num">1.2M</span>
+          <span className="num">0.9M</span>
+          <span className="num">1.4M</span>
+          <span className="num">1.1M</span>
+          <span className="num dash-hide-sm">1.3M</span>
+          <span className="num dash-hide-sm">5.9M</span>
+        </div>
+        <div className="dash-table-row">
+          <span className="dash-series-dot info">Sonnet</span>
+          <span className="num">0.8M</span>
+          <span className="num">0.6M</span>
+          <span className="num">0.9M</span>
+          <span className="num">0.7M</span>
+          <span className="num dash-hide-sm">0.8M</span>
+          <span className="num dash-hide-sm">3.8M</span>
+        </div>
+        <div className="dash-table-row">
+          <span className="dash-series-dot muted">Haiku</span>
+          <span className="num">0.4M</span>
+          <span className="num">0.3M</span>
+          <span className="num">0.5M</span>
+          <span className="num">0.4M</span>
+          <span className="num dash-hide-sm">0.5M</span>
+          <span className="num dash-hide-sm">2.1M</span>
+        </div>
+        <div className="dash-table-row totals">
+          <span>Total</span>
+          <span className="num">2.4M</span>
+          <span className="num">1.8M</span>
+          <span className="num">2.8M</span>
+          <span className="num">2.2M</span>
+          <span className="num dash-hide-sm">2.6M</span>
+          <span className="num dash-hide-sm">11.8M</span>
+        </div>
+      </div>
+    </div>
+  );
+}
