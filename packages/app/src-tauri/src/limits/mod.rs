@@ -629,6 +629,10 @@ async fn run_limits_and_emit(app_handle: &AppHandle) {
     if let Err(e) = app_handle.emit(LIMITS_UPDATED_EVENT, &snapshot) {
         tracing::warn!("failed to emit {LIMITS_UPDATED_EVENT}: {e}");
     }
+
+    // Refresh the menu-bar text badge from the newly cached snapshot. This
+    // piggybacks on the existing poll/emit path — no extra polling.
+    crate::menubar::apply_badge(app_handle);
 }
 
 // ---------------------------------------------------------------------------

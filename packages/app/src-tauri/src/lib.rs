@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod ingest;
 pub mod limits;
+pub mod menubar;
 pub mod pricing;
 pub mod usage;
 
@@ -166,6 +167,8 @@ pub fn run() {
             limits::query_limits,
             limits::get_alerts_muted,
             limits::set_alerts_muted,
+            menubar::get_menubar_badge_mode,
+            menubar::set_menubar_badge_mode,
             budgets::list_groups,
             budgets::create_group,
             budgets::update_group,
@@ -200,7 +203,7 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // dark ones — instead of reusing the full-color app icon.
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/menubar-template.png"))?;
 
-    let _tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::new()
         .icon(icon)
         .icon_as_template(true)
         .menu(&menu)
@@ -280,6 +283,12 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
         })
         .build(app)?;
+
+    // Keep the tray handle in managed state so the menu-bar badge can be
+    // updated after startup without recreating the icon (which would drop its
+    // position). Apply the initial title from the last known snapshot (if any).
+    app.manage(menubar::TrayHandle(std::sync::Mutex::new(Some(tray))));
+    menubar::apply_badge(app.handle());
 
     Ok(())
 }
