@@ -43,12 +43,19 @@ anyhow = "1"
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
 
 [dev-dependencies]
 tempfile = "3"
 
 [features]
 keychain = []
+
+[lints.rust]
+# tauri-nspanel's `panel_delegate!` macro expands to legacy `objc` macros that
+# reference `feature = "cargo-clippy"`, which trips the `unexpected_cfgs` lint.
+# Declare it as a known cfg value so only that false positive is silenced.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
 [profile.release]
 panic = "abort"
