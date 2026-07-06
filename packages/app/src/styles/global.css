@@ -1,16 +1,22 @@
 :root {
   color-scheme: light dark;
-  --font-stack:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
-  --font-mono:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
-  --radius-sm: 3px;
-  --radius-md: 5px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  /* ── Fonts ──────────────────────────────────────────────────────────────── */
+  --font-ui: "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-data: "Geist Mono Variable", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* Aliases so existing usages of --font-stack / --font-mono keep working */
+  --font-stack: var(--font-ui);
+  --font-mono: var(--font-data);
+
+  /* ── Radius ─────────────────────────────────────────────────────────────── */
+  --radius-sm: 2px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 14px;
   --radius-full: 999px;
 
+  /* ── Spacing ─────────────────────────────────────────────────────────────── */
   --space-2xs: 4px;
   --space-xs: 8px;
   --space-sm: 12px;
@@ -18,118 +24,169 @@
   --space-lg: 24px;
   --space-xl: 32px;
 
+  /* ── Duration ────────────────────────────────────────────────────────────── */
   --duration-instant: 80ms;
   --duration-short: 120ms;
   --duration-medium: 180ms;
   --duration-long: 300ms;
 }
 
-:root[data-theme="light"] {
-  --bg: #ffffff;
-  --bg-elevated: #f7f7f8;
-  --bg-sidebar: #f2f2f3;
-  --bg-statusbar: #ececee;
-  --bg-hover: rgba(0, 0, 0, 0.05);
-  --bg-active: rgba(0, 0, 0, 0.08);
-  --bg-overlay: rgba(0, 0, 0, 0.4);
-
-  --surface: #ffffff;
-  --surface-2: #f7f7f8;
-  --surface-3: #ededee;
-
-  --text: #1a1a1c;
-  --text-muted: #5b5b66;
-  --text-subtle: #888892;
-  --text-inverse: #ffffff;
-
-  --border: #e1e1e4;
-  --border-strong: #c7c7cc;
-
-  --canvas: #FAFAF9;
-  --elevated: #FFFFFF;
-  --hairline: rgba(0, 0, 0, 0.04);
-
-  --accent: #7C3AED;
-  --accent-hover: #6D28D9;
-  --accent-soft: rgba(124, 58, 237, 0.10);
-  --accent-glow: rgba(124, 58, 237, 0.16);
-  --accent-text: #ffffff;
-
-  --danger: #dc2626;
-  --warning: #d97706;
-  --success: #16a34a;
-  --success-soft: rgba(22, 163, 74, 0.12);
-  --info: #2563EB;
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.18);
-
-  /* Connection color palette (light theme).
-     Semantic-mapped: violet=accent, blue=info, green=success, amber=warning, red=danger.
-     Tuned for contrast against --canvas #FAFAF9 (darker shades for legibility). */
-  --conn-color-violet: var(--accent);
-  --conn-color-blue: var(--info);
-  --conn-color-green: var(--success);
-  --conn-color-amber: var(--warning);
-  --conn-color-red: var(--danger);
-  --conn-color-teal: #0D9488;
-  --conn-color-pink: #DB2777;
-  --conn-color-gray: #6B7280;
-}
+/* ── Dark theme (canonical) ──────────────────────────────────────────────── */
 
 :root[data-theme="dark"] {
-  --bg: #18181b;
-  --bg-elevated: #1f1f23;
-  --bg-sidebar: #16161a;
-  --bg-statusbar: #1c1c20;
-  --bg-hover: rgba(255, 255, 255, 0.06);
+  /* Surface ladder */
+  --bg: #0B0B0F;
+  --bg-elevated: #171720;
+  --surface: #121218;
+  --surface-2: #171720;
+  --surface-3: #1C1C22;
+  --raised: #171720;
+  --panel: #101015;
+  --canvas: #0B0B0F;
+  --elevated: #121218;
+  --bg-hover: #1D1D27;
+  --hover: #1D1D27;
+
+  /* Legacy sidebar/statusbar vars kept for backwards compat */
+  --bg-sidebar: #101015;
+  --bg-statusbar: #0B0B0F;
   --bg-active: rgba(255, 255, 255, 0.1);
   --bg-overlay: rgba(0, 0, 0, 0.55);
 
-  --surface: #1C1C24;
-  --surface-2: #23232C;
-  --surface-3: #2d2d33;
+  /* Borders */
+  --border: #262631;
+  --border-strong: #3A3946;
+  --hairline: rgba(255, 255, 255, 0.05);
 
-  --canvas: #0B0B0F;
-  --elevated: #15151B;
-  --hairline: rgba(255, 255, 255, 0.04);
+  /* Track (empty rail) */
+  --track: #1C1C22;
 
-  --text: #f4f4f5;
-  --text-muted: #a1a1aa;
-  --text-subtle: #71717a;
+  /* Text */
+  --text: #F4F2F8;
+  --text-muted: #9A96A8;
+  --text-subtle: #686475;
   --text-inverse: #09090b;
 
-  --border: #2e2e33;
-  --border-strong: #3f3f46;
-
-  --accent: #A855F7;
+  /* Brand / accent (demoted to chrome only — never on gauge) */
+  --accent: #AA41F6;
   --accent-hover: #C084FC;
-  --accent-soft: rgba(168, 85, 247, 0.12);
-  --accent-glow: rgba(168, 85, 247, 0.18);
+  --accent-soft: rgba(170, 65, 246, 0.14);
+  --accent-glow: rgba(170, 65, 246, 0.18);
   --accent-text: #ffffff;
+  --brand: #AA41F6;
+  --brand-2: #D370FF;
+  --brand-line: rgba(211, 112, 255, 0.65);
 
-  --danger: #f87171;
-  --warning: #fbbf24;
-  --success: #34d399;
-  --success-soft: rgba(74, 222, 128, 0.12);
+  /* Semantic gauge ramp */
+  --gauge-safe: #39D98A;
+  --gauge-safe-bg: rgba(57, 217, 138, 0.14);
+  --gauge-watch: #F5C451;
+  --gauge-watch-bg: rgba(245, 196, 81, 0.14);
+  --gauge-danger: #FF6B6B;
+  --gauge-danger-bg: rgba(255, 107, 107, 0.14);
+  --gauge-critical: #FF3B30;
+  --gauge-critical-bg: rgba(255, 59, 48, 0.18);
   --info: #60A5FA;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.7);
+  /* Semantic aliases (keep old names pointing to the ramp) */
+  --success: #39D98A;
+  --success-soft: var(--gauge-safe-bg);
+  --warning: #F5C451;
+  --danger: #FF6B6B;
 
-  /* Connection color palette (dark theme).
-     Semantic-mapped: violet=accent, blue=info, green=success, amber=warning, red=danger.
-     Brighter shades tuned for legibility against the dark canvas #0B0B0F. */
-  --conn-color-violet: var(--accent);
+  /* Shadows — near-zero on dark; depth from surface ladder + hairline */
+  --shadow-sm: 0 0 0 1px var(--hairline);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
+
+  /* Connection color palette */
+  --conn-color-violet: var(--brand);
+  --conn-color-green: var(--gauge-safe);
+  --conn-color-amber: var(--gauge-watch);
+  --conn-color-red: var(--gauge-danger);
   --conn-color-blue: var(--info);
-  --conn-color-green: var(--success);
-  --conn-color-amber: var(--warning);
-  --conn-color-red: var(--danger);
   --conn-color-teal: #2DD4BF;
   --conn-color-pink: #F472B6;
   --conn-color-gray: #9CA3AF;
+}
+
+/* ── Light theme (fallback) ──────────────────────────────────────────────── */
+
+:root[data-theme="light"] {
+  /* Surface ladder */
+  --bg: #FAFAFB;
+  --bg-elevated: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-2: #F4F4F6;
+  --surface-3: #ECECF0;
+  --raised: #FFFFFF;
+  --panel: #F4F4F6;
+  --canvas: #FAFAFB;
+  --elevated: #FFFFFF;
+  --bg-hover: #F0F0F3;
+  --hover: #F0F0F3;
+
+  /* Legacy sidebar/statusbar vars kept for backwards compat */
+  --bg-sidebar: #F4F4F6;
+  --bg-statusbar: #ECECF0;
+  --bg-active: rgba(0, 0, 0, 0.08);
+  --bg-overlay: rgba(0, 0, 0, 0.4);
+
+  /* Borders */
+  --border: #E4E4EA;
+  --border-strong: #CFCFD8;
+  --hairline: rgba(0, 0, 0, 0.05);
+
+  /* Track */
+  --track: #ECECF0;
+
+  /* Text */
+  --text: #16161C;
+  --text-muted: #5C5A66;
+  --text-subtle: #8A8792;
+  --text-inverse: #ffffff;
+
+  /* Brand / accent */
+  --accent: #8B2FD6;
+  --accent-hover: #7A28BE;
+  --accent-soft: rgba(139, 47, 214, 0.10);
+  --accent-glow: rgba(139, 47, 214, 0.16);
+  --accent-text: #ffffff;
+  --brand: #8B2FD6;
+  --brand-2: #B25CE8;
+  --brand-line: rgba(139, 47, 214, 0.5);
+
+  /* Semantic gauge ramp (slightly darker for contrast on light) */
+  --gauge-safe: #16A34A;
+  --gauge-safe-bg: rgba(22, 163, 74, 0.12);
+  --gauge-watch: #CA8A04;
+  --gauge-watch-bg: rgba(202, 138, 4, 0.12);
+  --gauge-danger: #DC2626;
+  --gauge-danger-bg: rgba(220, 38, 38, 0.12);
+  --gauge-critical: #B91C1C;
+  --gauge-critical-bg: rgba(185, 28, 28, 0.12);
+  --info: #2563EB;
+
+  /* Semantic aliases */
+  --success: #16A34A;
+  --success-soft: var(--gauge-safe-bg);
+  --warning: #CA8A04;
+  --danger: #DC2626;
+
+  /* Shadows — subtle on light */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.10);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.14);
+
+  /* Connection color palette */
+  --conn-color-violet: var(--brand);
+  --conn-color-green: var(--gauge-safe);
+  --conn-color-amber: var(--gauge-watch);
+  --conn-color-red: var(--gauge-danger);
+  --conn-color-blue: var(--info);
+  --conn-color-teal: #0D9488;
+  --conn-color-pink: #DB2777;
+  --conn-color-gray: #6B7280;
 }
 
 * {
@@ -142,7 +199,7 @@ body,
   margin: 0;
   padding: 0;
   height: 100%;
-  font-family: var(--font-stack);
+  font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1.45;
   color: var(--text);
@@ -194,7 +251,7 @@ select:focus-visible {
   min-height: 100vh;
   background: var(--canvas);
   color: var(--text);
-  font-family: var(--font-stack);
+  font-family: var(--font-ui);
 }
 
 .dashboard__content {
@@ -286,10 +343,10 @@ select:focus-visible {
 }
 
 .kpi-card {
-  background: var(--elevated);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   padding: var(--space-md);
   display: flex;
   flex-direction: column;
@@ -316,6 +373,8 @@ select:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
 }
 
 .kpi-card__sub {
@@ -327,10 +386,11 @@ select:focus-visible {
 }
 
 .kpi-card__value--mono {
-  font-family: var(--font-mono);
+  font-family: var(--font-data);
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Toolbar (controls) ──────────────────────────────────────────────────── */
@@ -474,12 +534,14 @@ select:focus-visible {
   white-space: nowrap;
   font-family: var(--font-mono);
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 .usage-table__total-cell {
   font-weight: 600;
   background: var(--surface-2);
   border-left: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Color dot chip next to series name */

@@ -61,14 +61,19 @@ function formatResetDate(resetsAt: string): string {
   }
 }
 
+function clamp01(v: number): number {
+  return Math.min(1, Math.max(0, v));
+}
+
 /**
  * Pick a bar fill color based on utilization severity.
- * >=80 → danger, >=50 → warning, else → accent.
+ * >=100 → critical, >=85 → danger, >=70 → watch, else → safe.
  */
 function barColor(utilization: number): string {
-  if (utilization >= 80) return "var(--danger)";
-  if (utilization >= 50) return "var(--warning)";
-  return "var(--accent)";
+  if (utilization >= 100) return "var(--gauge-critical)";
+  if (utilization >= 85) return "var(--gauge-danger)";
+  if (utilization >= 70) return "var(--gauge-watch)";
+  return "var(--gauge-safe)";
 }
 
 interface LimitGaugeProps {
@@ -79,16 +84,24 @@ interface LimitGaugeProps {
   resetsAt: string;
   /** Render a smaller, more compact variant for per-model rows. */
   compact?: boolean;
+  /**
+   * Total window duration in ms. When provided along with a valid resetsAt,
+   * the component computes a pace marker and pace note.
+   */
+  windowMs?: number;
 }
 
 /**
  * A labeled horizontal progress bar with % and "resetea en Xh Ym".
+ * Non-compact gauges show threshold ticks at 70%, 85%, 100%
+ * and an optional pace marker when windowMs is supplied.
  */
 export function LimitGauge({
   label,
   utilization,
   resetsAt,
   compact = false,
+  windowMs,
 }: LimitGaugeProps) {
   const clampedPct = Math.min(100, Math.max(0, utilization));
   const diffMs = resetsAt ? new Date(resetsAt).getTime() - Date.now() : NaN;
@@ -100,10 +113,39 @@ export function LimitGauge({
           .join(" · ");
   const color = barColor(clampedPct);
 
-  const trackHeight = compact ? 4 : 6;
+  // Pace marker computation
+  let pace: number | null = null;
+  let paceRatio: number | null = null;
+
+  if (windowMs && resetsAt) {
+    const msUntilReset = new Date(resetsAt).getTime() - Date.now();
+    if (!isNaN(msUntilReset)) {
+      pace = clamp01((windowMs - msUntilReset) / windowMs);
+      paceRatio = pace > 0 ? (clampedPct / 100) / pace : null;
+    }
+  }
+
+  const trackHeight = compact ? 5 : 8;
+  const markerHeight = trackHeight + 4; // slightly taller than the rail
   const fontSize = compact ? 11 : 12;
   const labelFontSize = compact ? 11 : 12;
   const verticalGap = compact ? 3 : 5;
+
+  // Pace note text and color
+  let paceNote: string | null = null;
+  let paceNoteColor: string = "var(--text-muted)";
+  if (paceRatio !== null) {
+    if (paceRatio >= 1.15) {
+      paceNote = `${paceRatio.toFixed(1)}× sobre ritmo`;
+      paceNoteColor = color;
+    } else if (paceRatio <= 0.85) {
+      paceNote = "holgado";
+      paceNoteColor = "var(--gauge-safe)";
+    } else {
+      paceNote = "en ritmo";
+      paceNoteColor = "var(--text-muted)";
+    }
+  }
 
   return (
     <div
@@ -132,17 +174,18 @@ export function LimitGauge({
         </span>
         <span
           style={{
-            fontSize,
-            fontWeight: 600,
+            fontSize: compact ? fontSize : 15,
+            fontWeight: 500,
             color,
             fontVariantNumeric: "tabular-nums",
+            fontFamily: "var(--font-data)",
           }}
         >
           {Math.round(clampedPct)}%
         </span>
       </div>
 
-      {/* Track + fill */}
+      {/* Track + fill + ticks + pace marker */}
       <div
         role="progressbar"
         aria-valuenow={Math.round(clampedPct)}
@@ -152,35 +195,115 @@ export function LimitGauge({
         style={{
           position: "relative",
           height: trackHeight,
-          borderRadius: "var(--radius-full)",
-          background: "var(--surface-3)",
-          overflow: "hidden",
+          borderRadius: "var(--radius-sm)",
+          background: "var(--track)",
         }}
       >
+        {/* Fill */}
         <div
           style={{
             position: "absolute",
             inset: "0 auto 0 0",
             width: `${clampedPct}%`,
             background: color,
-            borderRadius: "var(--radius-full)",
-            transition: "width var(--duration-medium) ease",
+            borderRadius: "var(--radius-sm)",
           }}
         />
+
+        {/* Threshold ticks at 70%, 85%, 100% — non-compact only */}
+        {!compact && (
+          <>
+            <div
+              aria-hidden
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: "70%",
+                width: 1,
+                background: "var(--border-strong)",
+              }}
+            />
+            <div
+              aria-hidden
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: "85%",
+                width: 1,
+                background: "var(--border-strong)",
+              }}
+            />
+            <div
+              aria-hidden
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: "100%",
+                width: 1,
+                background: "var(--border-strong)",
+              }}
+            />
+          </>
+        )}
+
+        {/* Pace marker — neutral high-contrast, never brand/purple */}
+        {pace !== null && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: "50%",
+              transform: "translate(-50%, -50%)",
+              left: `${pace * 100}%`,
+              width: 2,
+              height: markerHeight,
+              background: "rgba(244, 242, 248, 0.85)",
+              borderRadius: 1,
+            }}
+          />
+        )}
       </div>
 
-      {/* Reset label: "resetea en Xh Ym · 20:00 GMT-4" when < 12 h remain; "cierra el sáb 12 jul" otherwise */}
-      {resetLabel && (
-        <span
+      {/* Sub-row: pace note (left) + reset label (right) */}
+      {(paceNote !== null || resetLabel) && (
+        <div
           style={{
-            fontSize: 10,
-            color: "var(--text-muted)",
-            lineHeight: 1,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 4,
           }}
         >
-          {resetLabel}
-        </span>
+          {paceNote !== null ? (
+            <span
+              style={{
+                fontSize: 10,
+                color: paceNoteColor,
+                lineHeight: 1,
+              }}
+            >
+              {paceNote}
+            </span>
+          ) : (
+            <span />
+          )}
+          {resetLabel && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "var(--text-muted)",
+                lineHeight: 1,
+              }}
+            >
+              {resetLabel}
+            </span>
+          )}
+        </div>
       )}
+
     </div>
   );
 }

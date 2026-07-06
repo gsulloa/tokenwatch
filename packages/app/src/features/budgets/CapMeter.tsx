@@ -3,13 +3,13 @@ import type { BudgetBasis } from "./types";
 
 /**
  * Pick a bar fill color based on proximity to the group's own cap.
- * >= 100% (over cap) → danger; >= 80% → danger; >= 50% → warning; else → accent.
+ * >= 100% (over cap) → critical; >= 85% → danger; >= 70% → watch; else → safe.
  */
 function capBarColor(fraction: number): string {
-  if (fraction >= 1) return "var(--danger)";
-  if (fraction >= 0.8) return "var(--danger)";
-  if (fraction >= 0.5) return "var(--warning)";
-  return "var(--accent)";
+  if (fraction >= 1) return "var(--gauge-critical)";
+  if (fraction >= 0.85) return "var(--gauge-danger)";
+  if (fraction >= 0.7) return "var(--gauge-watch)";
+  return "var(--gauge-safe)";
 }
 
 /**
@@ -70,9 +70,8 @@ export function CapMeter({ measuredValue, budgetValue, budgetBasis, label }: Cap
         style={{
           position: "relative",
           height: 3,
-          borderRadius: "var(--radius-full)",
-          background: "var(--surface-3)",
-          overflow: "hidden",
+          borderRadius: "var(--radius-sm)",
+          background: "var(--track)",
         }}
       >
         <div
@@ -81,8 +80,7 @@ export function CapMeter({ measuredValue, budgetValue, budgetBasis, label }: Cap
             inset: "0 auto 0 0",
             width: `${clampedFraction * 100}%`,
             background: color,
-            borderRadius: "var(--radius-full)",
-            transition: "width var(--duration-medium) ease",
+            borderRadius: "var(--radius-sm)",
           }}
         />
       </div>
@@ -91,7 +89,7 @@ export function CapMeter({ measuredValue, budgetValue, budgetBasis, label }: Cap
       <span
         style={{
           fontSize: 10,
-          color: overCap ? "var(--danger)" : "var(--text-muted)",
+          color: overCap ? "var(--gauge-danger)" : "var(--text-muted)",
           fontVariantNumeric: "tabular-nums",
           lineHeight: 1,
         }}

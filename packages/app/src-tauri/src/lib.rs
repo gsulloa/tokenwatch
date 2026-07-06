@@ -8,7 +8,7 @@ pub mod usage;
 
 use std::sync::Mutex;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_updater::Builder as UpdaterBuilder;
 
 use usage::AppState;
@@ -20,13 +20,19 @@ pub fn run() {
         )
         .init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_process::init())
         .plugin(UpdaterBuilder::new().build())
-        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_notification::init());
+
+    // Register the NSPanel plugin on macOS only.
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+
+    builder
         .setup(|app| {
             // macOS menu-bar mode: no Dock icon.
             #[cfg(target_os = "macos")]
@@ -50,16 +56,88 @@ pub fn run() {
             // Build the system tray icon with a context menu.
             build_tray(app)?;
 
-            // Subscribe to window focus-lost → hide the popover (not main).
-            let popover_win = app
-                .get_webview_window("popover")
-                .expect("popover window must exist");
-            let popover_win_clone = popover_win.clone();
-            popover_win.on_window_event(move |event| {
-                if let tauri::WindowEvent::Focused(false) = event {
-                    let _ = popover_win_clone.hide();
-                }
-            });
+            // ----------------------------------------------------------------
+            // macOS: Convert the popover WebviewWindow into a non-activating
+            // NSPanel so it can appear over fullscreen Spaces without switching
+            // Spaces or activating our app.
+            // ----------------------------------------------------------------
+            #[cfg(target_os = "macos")]
+            {
+                // tauri-nspanel re-exports the (deprecated) `cocoa` crate through
+                // its public API — `NSWindowCollectionBehavior` and the
+                // `panel_delegate!` macro. Consuming them is unavoidable until the
+                // plugin migrates to objc2, so we scope-allow the deprecation here.
+                // (The `panel_delegate!` macro also expands to legacy `objc` macros
+                // that reference a `cargo-clippy` cfg; that `unexpected_cfgs` noise is
+                // silenced via check-cfg in Cargo.toml's [lints].)
+                #![allow(deprecated)]
+                use tauri_nspanel::{
+                    cocoa::appkit::NSWindowCollectionBehavior, panel_delegate, WebviewWindowExt,
+                };
+
+                let popover_win = app
+                    .get_webview_window("popover")
+                    .expect("popover window must exist");
+
+                let panel = popover_win.to_panel().unwrap();
+
+                // Non-activating panel: clicking shows the panel without
+                // activating our app, so no Space-switch occurs.
+                #[allow(non_upper_case_globals)]
+                const NSWindowStyleMaskNonActivatingPanel: i32 = 1 << 7;
+                panel.set_style_mask(NSWindowStyleMaskNonActivatingPanel);
+
+                // Collection behavior:
+                //   CanJoinAllSpaces    — always on the active Space
+                //   FullScreenAuxiliary — draws over fullscreen app's Space
+                //   Stationary          — does not move between Spaces itself
+                panel.set_collection_behaviour(
+                    NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
+                        | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
+                        | NSWindowCollectionBehavior::NSWindowCollectionBehaviorStationary,
+                );
+
+                // Raise to NSPopUpMenuWindowLevel (101) so it floats above
+                // the menu bar itself.
+                #[allow(non_upper_case_globals)]
+                const NSPopUpMenuWindowLevel: i32 = 101;
+                panel.set_level(NSPopUpMenuWindowLevel);
+
+                // Auto-hide when the panel loses key status (focus lost).
+                let delegate = panel_delegate!(PopoverPanelDelegate {
+                    window_did_resign_key
+                });
+
+                let app_handle = app.handle().clone();
+                delegate.set_listener(Box::new(move |delegate_name: String| {
+                    if delegate_name == "window_did_resign_key" {
+                        if let Ok(p) =
+                            tauri_nspanel::ManagerExt::get_webview_panel(&app_handle, "popover")
+                        {
+                            p.order_out(None);
+                        }
+                    }
+                }));
+
+                panel.set_delegate(delegate);
+            }
+
+            // ----------------------------------------------------------------
+            // Non-macOS: use a plain WebviewWindow with a focus-lost handler.
+            // ----------------------------------------------------------------
+            #[cfg(not(target_os = "macos"))]
+            {
+                let popover_win = app
+                    .get_webview_window("popover")
+                    .expect("popover window must exist");
+
+                let popover_win_clone = popover_win.clone();
+                popover_win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Focused(false) = event {
+                        let _ = popover_win_clone.hide();
+                    }
+                });
+            }
 
             // Closing the dashboard should hide it (keep the window alive so it
             // can be reopened) and drop back to Accessory so no Dock icon lingers.
@@ -156,14 +234,47 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(win) = app.get_webview_window("popover") {
-                    if win.is_visible().unwrap_or(false) {
-                        let _ = win.hide();
-                    } else {
-                        // Position the popover near the tray click point.
-                        position_popover_near_click(&win, position);
-                        let _ = win.show();
-                        let _ = win.set_focus();
+
+                // ----------------------------------------------------------
+                // macOS: use the NSPanel API so the popover appears over
+                // fullscreen Spaces without activating our app.
+                // ----------------------------------------------------------
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri_nspanel::ManagerExt;
+
+                    if let Ok(panel) = app.get_webview_panel("popover") {
+                        if panel.is_visible() {
+                            panel.order_out(None);
+                        } else {
+                            // Use the WebviewWindow handle only for positioning;
+                            // the panel's own show() makes it key without
+                            // activating the app.
+                            if let Some(win) = app.get_webview_window("popover") {
+                                position_popover_near_click(&win, position);
+                            }
+                            panel.show();
+                            // Becoming key as a panel can leave the webview
+                            // scrolled to the bottom; tell the frontend to pin
+                            // its scroll position back to the top.
+                            let _ = app.emit("popover-shown", ());
+                        }
+                    }
+                }
+
+                // ----------------------------------------------------------
+                // Non-macOS: plain WebviewWindow toggle.
+                // ----------------------------------------------------------
+                #[cfg(not(target_os = "macos"))]
+                {
+                    if let Some(win) = app.get_webview_window("popover") {
+                        if win.is_visible().unwrap_or(false) {
+                            let _ = win.hide();
+                        } else {
+                            position_popover_near_click(&win, position);
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
                     }
                 }
             }
@@ -242,9 +353,21 @@ fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
     }
+
     // Hide the popover when opening the dashboard.
-    if let Some(pop) = app.get_webview_window("popover") {
-        let _ = pop.hide();
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::ManagerExt;
+        if let Ok(panel) = app.get_webview_panel("popover") {
+            panel.order_out(None);
+        }
     }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(pop) = app.get_webview_window("popover") {
+            let _ = pop.hide();
+        }
+    }
+
     Ok(())
 }
