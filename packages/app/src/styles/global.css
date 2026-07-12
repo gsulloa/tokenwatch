@@ -334,6 +334,54 @@ select:focus-visible {
   cursor: not-allowed;
 }
 
+/* ── Dashboard two-column layout (main + live-status rail) ──────────────── */
+
+.dashboard__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+  gap: var(--space-lg);
+}
+
+.dashboard__main {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.dashboard__rail {
+  grid-column: 2;
+  grid-row: 1;
+  /* Sticky below the sticky topbar; approximate topbar height + breathing room. */
+  position: sticky;
+  top: calc(var(--space-lg) + 44px);
+}
+
+.dashboard__rail-panel .panel__body {
+  padding: var(--space-md);
+}
+
+/* Narrow viewports: collapse to a single column, live status (pressure) first. */
+@media (max-width: 900px) {
+  .dashboard__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard__rail {
+    grid-column: 1;
+    grid-row: 1;
+    position: static;
+  }
+
+  .dashboard__main {
+    grid-column: 1;
+    grid-row: 2;
+  }
+}
+
 /* ── KPI Grid ────────────────────────────────────────────────────────────── */
 
 .kpi-grid {

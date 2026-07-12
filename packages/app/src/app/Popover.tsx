@@ -1,10 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
-import { LimitsSection } from "@/features/limits/LimitsSection";
-import { TodayByProjectList } from "@/features/usage/TodayByProjectList";
-import { GroupBudgetsSection } from "@/features/budgets/GroupBudgetsSection";
-import { useGroupBudgets } from "@/features/budgets/useGroupBudgets";
-import { useLimits } from "@/features/limits/useLimits";
-import { useTodayByProject } from "@/features/usage/useTodayByProject";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { LiveStatusPanel } from "@/features/live-status/LiveStatusPanel";
+import type { LiveStatusPanelHandle } from "@/features/live-status/LiveStatusPanel";
 import { UpdateBanner } from "@/features/updates/UpdateBanner";
 import { AboutSection } from "@/features/about/AboutSection";
 import { openChangelogInDashboard } from "@/features/about/changelogChannel";
@@ -108,24 +104,7 @@ function MenubarBadgeSelect({ mode, onChange, disabled }: MenubarBadgeSelectProp
  * The chart and controls are rendered in App.tsx below this component.
  */
 export function Popover() {
-  const {
-    snapshot,
-    loading: limitsLoading,
-    refreshIfStale: refreshLimitsIfStale,
-  } = useLimits();
-
-  const {
-    data: todayData,
-    loading: todayLoading,
-    refresh: refreshToday,
-  } = useTodayByProject();
-
-  // Used to conditionally show the GroupBudgetsSection + its surrounding separators
-  const { snapshot: budgetsSnapshot, loading: budgetsLoading } = useGroupBudgets();
-  const hasDefinedGroups =
-    budgetsLoading ||
-    (budgetsSnapshot !== null &&
-      budgetsSnapshot.rows.some((r) => r.groupId !== null));
+  const panelRef = useRef<LiveStatusPanelHandle>(null);
 
   const [alertsMuted, setAlertsMuted] = useState(false);
   const [muteLoading, setMuteLoading] = useState(false);
@@ -143,13 +122,11 @@ export function Popover() {
     });
   }, []);
 
-  // Trigger immediate refresh of both hooks on mount.
+  // Trigger immediate refresh of the panel on mount.
   // Uses the throttled path for limits so the first popover open right after
   // startup doesn't double-fetch when the popover-shown event fires shortly after.
   useEffect(() => {
-    refreshLimitsIfStale();
-    void refreshToday();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    panelRef.current?.refreshIfStale();
   }, []);
 
   // The popover webview persists between shows (it's a non-activating NSPanel),
@@ -168,15 +145,14 @@ export function Popover() {
             window.scrollTo(0, 0);
             document.scrollingElement?.scrollTo(0, 0);
           });
-          refreshLimitsIfStale();
-          void refreshToday();
+          panelRef.current?.refreshIfStale();
         });
       } catch {
         // Non-Tauri environment — nothing to listen to.
       }
     })();
     return () => unlisten?.();
-  }, [refreshLimitsIfStale, refreshToday]);
+  }, []);
 
   const handleMuteChange = useCallback(async (muted: boolean) => {
     setMuteLoading(true);
@@ -206,33 +182,7 @@ export function Popover() {
         gap: "var(--space-md)",
       }}
     >
-      <LimitsSection snapshot={snapshot} loading={limitsLoading} />
-
-      <div
-        style={{
-          height: 1,
-          background: "var(--border)",
-          margin: "0 calc(-1 * var(--space-xs))",
-        }}
-        role="separator"
-      />
-
-      {hasDefinedGroups && (
-        <>
-          <GroupBudgetsSection snapshot={budgetsSnapshot} loading={budgetsLoading} />
-
-          <div
-            style={{
-              height: 1,
-              background: "var(--border)",
-              margin: "0 calc(-1 * var(--space-xs))",
-            }}
-            role="separator"
-          />
-        </>
-      )}
-
-      <TodayByProjectList data={todayData} loading={todayLoading} />
+      <LiveStatusPanel ref={panelRef} />
 
       <div
         style={{
