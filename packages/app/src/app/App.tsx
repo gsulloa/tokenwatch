@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { APP_DISPLAY_NAME } from "@/platform/app-identity";
 import { useAppVersion } from "@/features/about/useAppVersion";
 import { ChangelogModal } from "@/features/about/ChangelogModal";
@@ -13,6 +13,8 @@ import { orderSeries } from "@/features/usage/seriesUtils";
 import { formatTokens, formatTokensExact, formatCost } from "@/features/usage/format";
 import { resolvePreset, resolveCustomRange, effectiveBucket } from "@/features/usage/dateRange";
 import { GroupsEditor } from "@/features/budgets/GroupsEditor";
+import { LiveStatusPanel } from "@/features/live-status/LiveStatusPanel";
+import type { LiveStatusPanelHandle } from "@/features/live-status/LiveStatusPanel";
 import type { ChartControlsValue } from "@/features/usage/ChartControls";
 import type { DateRangeFilter } from "@/features/usage/types";
 
@@ -80,6 +82,12 @@ function KpiCard({ label, value, sub, title, monoValue }: KpiCardProps) {
 export function App() {
   const [controls, setControls] =
     useState<ChartControlsValue>(DEFAULT_CONTROLS);
+
+  // Imperative handle for the shared live-status panel (limits, group budgets,
+  // today-by-project) mounted in the sidebar rail below. The dashboard's own
+  // "Actualizar" button also forces a refresh of this panel for consistency
+  // with the user's refresh gesture.
+  const livePanelRef = useRef<LiveStatusPanelHandle>(null);
 
   // App version + full changelog. The changelog modal lives in this (large,
   // resizable) window rather than the small popover; the popover asks us to
@@ -280,7 +288,10 @@ export function App() {
             </span>
             <button
               className="dashboard__refresh-btn"
-              onClick={refresh}
+              onClick={() => {
+                refresh();
+                livePanelRef.current?.refresh();
+              }}
               disabled={loading}
               aria-label="Actualizar datos"
             >
@@ -299,106 +310,123 @@ export function App() {
           </p>
         )}
 
-        {/* ── KPI Summary Row ─────────────────────────────────────────────── */}
-        <div className="kpi-grid">
-          <KpiCard
-            label={kpiTotalLabel}
-            value={kpiTotalValue}
-            title={kpiTotalTitle}
-          />
-          <KpiCard
-            label="Series"
-            value={data === null ? "—" : String(kpiSeriesCount)}
-            sub={kpiSeriesSub}
-          />
-          <KpiCard
-            label="Períodos"
-            value={data === null ? "—" : String(kpiBucketCount)}
-            sub={kpiBucketSub}
-          />
-          <KpiCard
-            label="Eventos"
-            value={String(kpiEventCount)}
-          />
-          <KpiCard
-            label="Rango de fechas"
-            value={kpiDateRange}
-            monoValue={kpiDateRange !== "—"}
-          />
-        </div>
-
-        {/* ── Controls Toolbar ────────────────────────────────────────────── */}
-        <div className="toolbar">
-          <ChartControls
-            value={controls}
-            onChange={handleControlsChange}
-            earliestDate={meta?.earliestDate}
-            latestDate={meta?.latestDate}
-            resolvedSince={resolvedSince}
-            resolvedUntil={resolvedUntil}
-          />
-        </div>
-
-        {/* ── Chart Panel ─────────────────────────────────────────────────── */}
-        <div className="panel">
-          <div className="panel__header">
-            <h2 className="panel__title">Uso a lo largo del tiempo</h2>
-          </div>
-          <div className="panel__body">
-            {data ? (
-              <UsageChart
-                response={data}
-                colorMap={colorMap}
-                orderedNames={orderedNames}
-                hoveredSeries={hoveredSeries}
-                onHoverSeries={setHoveredSeries}
-                activeBucket={resolvedBucket}
+        <div className="dashboard__layout">
+          {/* ── Main column: KPIs, controls, chart, table, groups editor ───── */}
+          <div className="dashboard__main">
+            {/* ── KPI Summary Row ───────────────────────────────────────────── */}
+            <div className="kpi-grid">
+              <KpiCard
+                label={kpiTotalLabel}
+                value={kpiTotalValue}
+                title={kpiTotalTitle}
               />
-            ) : !loading ? (
-              <div
-                role="status"
-                aria-label="Sin datos"
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  height: 360,
-                  gap: 8,
-                  color: "var(--text-muted)",
-                }}
-              >
-                <span style={{ fontSize: 32 }}>📊</span>
-                <p style={{ margin: 0, fontWeight: 600 }}>Sin datos de uso</p>
-                <p style={{ margin: 0, fontSize: 12 }}>
-                  Conecta con el backend de Tauri para ver datos de uso.
-                </p>
+              <KpiCard
+                label="Series"
+                value={data === null ? "—" : String(kpiSeriesCount)}
+                sub={kpiSeriesSub}
+              />
+              <KpiCard
+                label="Períodos"
+                value={data === null ? "—" : String(kpiBucketCount)}
+                sub={kpiBucketSub}
+              />
+              <KpiCard
+                label="Eventos"
+                value={String(kpiEventCount)}
+              />
+              <KpiCard
+                label="Rango de fechas"
+                value={kpiDateRange}
+                monoValue={kpiDateRange !== "—"}
+              />
+            </div>
+
+            {/* ── Controls Toolbar ──────────────────────────────────────────── */}
+            <div className="toolbar">
+              <ChartControls
+                value={controls}
+                onChange={handleControlsChange}
+                earliestDate={meta?.earliestDate}
+                latestDate={meta?.latestDate}
+                resolvedSince={resolvedSince}
+                resolvedUntil={resolvedUntil}
+              />
+            </div>
+
+            {/* ── Chart Panel ───────────────────────────────────────────────── */}
+            <div className="panel">
+              <div className="panel__header">
+                <h2 className="panel__title">Uso a lo largo del tiempo</h2>
               </div>
-            ) : null}
+              <div className="panel__body">
+                {data ? (
+                  <UsageChart
+                    response={data}
+                    colorMap={colorMap}
+                    orderedNames={orderedNames}
+                    hoveredSeries={hoveredSeries}
+                    onHoverSeries={setHoveredSeries}
+                    activeBucket={resolvedBucket}
+                  />
+                ) : !loading ? (
+                  <div
+                    role="status"
+                    aria-label="Sin datos"
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: 360,
+                      gap: 8,
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    <span style={{ fontSize: 32 }}>📊</span>
+                    <p style={{ margin: 0, fontWeight: 600 }}>Sin datos de uso</p>
+                    <p style={{ margin: 0, fontSize: 12 }}>
+                      Conecta con el backend de Tauri para ver datos de uso.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            {/* ── Table Panel ───────────────────────────────────────────────── */}
+            {hasNonZeroData && (
+              <div className="panel">
+                <div className="panel__header">
+                  <h2 className="panel__title">Detalle por serie</h2>
+                </div>
+                <div className="panel__body panel__body--flush">
+                  <UsageTable
+                    response={data!}
+                    orderedNames={orderedNames}
+                    colorMap={colorMap}
+                    hoveredSeries={hoveredSeries}
+                    onHoverSeries={setHoveredSeries}
+                    activeBucket={resolvedBucket}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* ── Groups Editor Panel ──────────────────────────────────────── */}
+            <GroupsEditor />
           </div>
+
+          {/* ── Sidebar rail: same live status as the popover ─────────────── */}
+          <aside className="dashboard__rail" aria-label="Estado en vivo">
+            <div className="panel dashboard__rail-panel">
+              <div className="panel__header">
+                <h2 className="panel__title">Estado en vivo</h2>
+              </div>
+              <div className="panel__body">
+                <LiveStatusPanel ref={livePanelRef} />
+              </div>
+            </div>
+          </aside>
         </div>
-
-        {/* ── Table Panel ─────────────────────────────────────────────────── */}
-        {hasNonZeroData && (
-          <div className="panel">
-            <div className="panel__header">
-              <h2 className="panel__title">Detalle por serie</h2>
-            </div>
-            <div className="panel__body panel__body--flush">
-              <UsageTable
-                response={data!}
-                orderedNames={orderedNames}
-                colorMap={colorMap}
-                hoveredSeries={hoveredSeries}
-                onHoverSeries={setHoveredSeries}
-                activeBucket={resolvedBucket}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* ── Groups Editor Panel ──────────────────────────────────────────── */}
-        <GroupsEditor />
       </div>
 
       {showChangelog && (
