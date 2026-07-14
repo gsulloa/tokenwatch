@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-07-14
+
+### Fixed
+- count cost for Sonnet 5 and future major model versions (#34)
+
+
+
 ## [0.2.4] - 2026-07-12
 
 ### Added
