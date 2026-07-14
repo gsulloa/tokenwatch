@@ -85,6 +85,12 @@ fn migrate(conn: &Connection) -> SqlResult<()> {
         tx.commit()?;
     }
 
+    if version < 6 {
+        // recompute_costs opens its own transaction, so do NOT wrap here.
+        apply_v6(conn)?;
+        set_meta(conn, "schema_version", "6")?;
+    }
+
     Ok(())
 }
 
@@ -168,6 +174,18 @@ fn apply_v5(conn: &Connection) -> SqlResult<()> {
     )
 }
 
+/// Migration v6 — repair pre-fix zero-cost events (e.g. `claude-sonnet-5`) by
+/// re-deriving `cost` for every row from its already-stored `model` and token
+/// counts, using the current price table (`pricing::cost`). PR #34 fixed
+/// family-based price matching for Sonnet 5 (and future major versions), but
+/// cost is persisted at ingest time and incremental ingestion never re-parses
+/// already-ingested JSONL lines, so events ingested before the fix kept
+/// `cost = 0`. Aditiva: no toca `input_tokens`/`output_tokens`/`total_tokens`/
+/// `project_name`/`dedup_key`.
+fn apply_v6(conn: &Connection) -> SqlResult<()> {
+    recompute_costs(conn)
+}
+
 /// Recompute `project_name` for every row from its stored `project_path`,
 /// updating in place within a single transaction (atomic). Idempotent: running
 /// on already-correct data is a no-op.
@@ -191,6 +209,54 @@ fn backfill_project_names(conn: &Connection) -> SqlResult<()> {
         tx.execute(
             "UPDATE usage_events SET project_name = ?1 WHERE dedup_key = ?2",
             params![new_name, dedup_key],
+        )?;
+    }
+    tx.commit()?;
+
+    Ok(())
+}
+
+/// Recompute `cost` for every row from its stored `model` + four token
+/// columns, updating in place within a single transaction (atomic).
+/// Deterministic and idempotent: every row's cost becomes
+/// `pricing::cost(model, usage)`, so re-running on already-correct data
+/// leaves it unchanged. Unknown models keep `cost = 0` — this backfill only
+/// applies the current price table, it never invents prices.
+fn recompute_costs(conn: &Connection) -> SqlResult<()> {
+    // Collect all (dedup_key, model, tokens…) first, then update in a single
+    // transaction so the backfill is atomic.
+    let mut stmt = conn.prepare(
+        "SELECT dedup_key, model, input_tokens, output_tokens, \
+                cache_creation_tokens, cache_read_tokens \
+         FROM usage_events",
+    )?;
+    let rows: Vec<(String, String, u64, u64, u64, u64)> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+                row.get::<_, u64>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, u64>(5)?,
+            ))
+        })?
+        .collect::<SqlResult<_>>()?;
+
+    let tx = conn.unchecked_transaction()?;
+    for (dedup_key, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens) in
+        rows
+    {
+        let usage = crate::pricing::Usage {
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+        };
+        let new_cost = crate::pricing::cost(&model, &usage);
+        tx.execute(
+            "UPDATE usage_events SET cost = ?1 WHERE dedup_key = ?2",
+            params![new_cost, dedup_key],
         )?;
     }
     tx.commit()?;
@@ -362,7 +428,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, "5");
+        assert_eq!(version, "6");
     }
 
     #[test]
@@ -627,5 +693,207 @@ mod tests {
             project_name, "unknown",
             "worktree project_name must be corrected to \"unknown\""
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Migration v6 — recompute cost tests
+    // -----------------------------------------------------------------------
+
+    /// A pre-fix Sonnet 5 row (stored with `cost = 0`) must be repaired to a
+    /// non-zero cost matching `pricing::cost` after `apply_v6`.
+    #[test]
+    fn test_v6_recompute_fixes_zero_cost_sonnet_5() {
+        let conn = test_conn();
+
+        let row = UsageEventRow {
+            dedup_key: "msg_s5:req_s5",
+            session_id: "sess_s5",
+            project_path: "/Users/x/dev/tub2",
+            project_name: "tub2",
+            model: "claude-sonnet-5",
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_creation_tokens: 50,
+            cache_read_tokens: 20,
+            total_tokens: 1_170,
+            cost: 0.0, // pre-fix: stored as zero
+            timestamp: "2026-07-01T00:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-07-01T00:00:01Z",
+        };
+        insert_event(&conn, &row).unwrap();
+
+        apply_v6(&conn).unwrap();
+
+        let cost: f64 = conn
+            .query_row(
+                "SELECT cost FROM usage_events WHERE dedup_key = 'msg_s5:req_s5'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let expected = crate::pricing::cost(
+            "claude-sonnet-5",
+            &crate::pricing::Usage {
+                input_tokens: 1_000,
+                output_tokens: 100,
+                cache_creation_tokens: 50,
+                cache_read_tokens: 20,
+            },
+        );
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "got {cost}, want {expected}"
+        );
+        assert!(cost > 0.0, "sonnet 5 cost must be repaired to non-zero");
+    }
+
+    /// Running `apply_v6` a second time must not change an already-recomputed
+    /// cost — the recompute is a pure, deterministic function of stored data.
+    #[test]
+    fn test_v6_recompute_idempotent() {
+        let conn = test_conn();
+
+        let row = UsageEventRow {
+            dedup_key: "msg_idem:req_idem",
+            session_id: "sess_idem",
+            project_path: "/Users/x/dev/tub2",
+            project_name: "tub2",
+            model: "claude-sonnet-5",
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_creation_tokens: 50,
+            cache_read_tokens: 20,
+            total_tokens: 1_170,
+            cost: 0.0,
+            timestamp: "2026-07-01T00:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-07-01T00:00:01Z",
+        };
+        insert_event(&conn, &row).unwrap();
+
+        apply_v6(&conn).unwrap();
+        let cost_after_first: f64 = conn
+            .query_row(
+                "SELECT cost FROM usage_events WHERE dedup_key = 'msg_idem:req_idem'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        apply_v6(&conn).unwrap();
+        let cost_after_second: f64 = conn
+            .query_row(
+                "SELECT cost FROM usage_events WHERE dedup_key = 'msg_idem:req_idem'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(
+            cost_after_first, cost_after_second,
+            "second run of apply_v6 must not change cost"
+        );
+    }
+
+    /// `apply_v6` must only touch `cost` — token counts, `total_tokens`,
+    /// `project_name`, and `dedup_key` must be unchanged.
+    #[test]
+    fn test_v6_recompute_preserves_other_columns() {
+        let conn = test_conn();
+
+        let row = UsageEventRow {
+            dedup_key: "msg_preserve:req_preserve",
+            session_id: "sess_preserve",
+            project_path: "/Users/x/dev/tub2",
+            project_name: "tub2",
+            model: "claude-sonnet-5",
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_creation_tokens: 50,
+            cache_read_tokens: 20,
+            total_tokens: 1_170,
+            cost: 0.0,
+            timestamp: "2026-07-01T00:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-07-01T00:00:01Z",
+        };
+        insert_event(&conn, &row).unwrap();
+
+        apply_v6(&conn).unwrap();
+
+        let (
+            input_tokens,
+            output_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+            total_tokens,
+            project_name,
+            dedup_key,
+        ): (u64, u64, u64, u64, u64, String, String) = conn
+            .query_row(
+                "SELECT input_tokens, output_tokens, cache_creation_tokens, \
+                        cache_read_tokens, total_tokens, project_name, dedup_key \
+                 FROM usage_events WHERE dedup_key = 'msg_preserve:req_preserve'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(input_tokens, 1_000);
+        assert_eq!(output_tokens, 100);
+        assert_eq!(cache_creation_tokens, 50);
+        assert_eq!(cache_read_tokens, 20);
+        assert_eq!(total_tokens, 1_170);
+        assert_eq!(project_name, "tub2");
+        assert_eq!(dedup_key, "msg_preserve:req_preserve");
+    }
+
+    /// An unknown model must keep `cost = 0` after `apply_v6` — the backfill
+    /// only applies the current price table, it never invents prices.
+    #[test]
+    fn test_v6_recompute_unknown_model_stays_zero() {
+        let conn = test_conn();
+
+        let row = UsageEventRow {
+            dedup_key: "msg_unknown:req_unknown",
+            session_id: "sess_unknown",
+            project_path: "/Users/x/dev/tub2",
+            project_name: "tub2",
+            model: "gpt-4o",
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            total_tokens: 1_100,
+            cost: 0.0,
+            timestamp: "2026-07-01T00:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-07-01T00:00:01Z",
+        };
+        insert_event(&conn, &row).unwrap();
+
+        apply_v6(&conn).unwrap();
+
+        let cost: f64 = conn
+            .query_row(
+                "SELECT cost FROM usage_events WHERE dedup_key = 'msg_unknown:req_unknown'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(cost, 0.0, "unknown model must keep cost at 0");
     }
 }
