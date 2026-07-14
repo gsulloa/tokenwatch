@@ -47,12 +47,13 @@ const HAIKU: PriceRow = PriceRow::new(1.00, 5.00, 1.25, 0.10);
 
 /// Return the price row for a given model string, or `None` if unknown.
 fn price_row(model: &str) -> Option<PriceRow> {
-    // Match by prefix/substring so minor version suffixes still resolve.
-    if model.contains("opus-4") {
+    // Match by model family (Opus/Sonnet/Haiku) regardless of major version,
+    // since price rows are shared across versions within a family.
+    if model.contains("opus") {
         Some(OPUS)
-    } else if model.contains("sonnet-4") {
+    } else if model.contains("sonnet") {
         Some(SONNET)
-    } else if model.contains("haiku-4") {
+    } else if model.contains("haiku") {
         Some(HAIKU)
     } else {
         None
@@ -156,6 +157,21 @@ mod tests {
     }
 
     #[test]
+    fn test_cost_sonnet_5_nonzero() {
+        // input=1000 * 3.0/1_000_000 = 0.003
+        // output=100 * 15.0/1_000_000 = 0.0015
+        // total = 0.0045
+        let usage = Usage {
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+        };
+        let c = cost("claude-sonnet-5", &usage);
+        assert!((c - 0.0045).abs() < 1e-9, "got {c}");
+    }
+
+    #[test]
     fn test_cost_unknown_model_returns_zero() {
         let usage = Usage {
             input_tokens: 1_000,
@@ -184,6 +200,9 @@ mod tests {
             "claude-sonnet-4-6",
             "claude-sonnet-4-5",
             "claude-haiku-4-5",
+            "claude-sonnet-5",
+            "claude-opus-5",
+            "claude-haiku-5",
         ];
         for model in models {
             assert!(
