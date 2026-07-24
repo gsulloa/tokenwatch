@@ -91,6 +91,12 @@ fn migrate(conn: &Connection) -> SqlResult<()> {
         set_meta(conn, "schema_version", "6")?;
     }
 
+    if version < 7 {
+        // recompute_costs opens its own transaction, so do NOT wrap here.
+        apply_v7(conn)?;
+        set_meta(conn, "schema_version", "7")?;
+    }
+
     Ok(())
 }
 
@@ -183,6 +189,13 @@ fn apply_v5(conn: &Connection) -> SqlResult<()> {
 /// `cost = 0`. Aditiva: no toca `input_tokens`/`output_tokens`/`total_tokens`/
 /// `project_name`/`dedup_key`.
 fn apply_v6(conn: &Connection) -> SqlResult<()> {
+    recompute_costs(conn)
+}
+
+/// Migration v7 — repair events persisted at `cost = 0` because their model
+/// family (Claude Fable 5 / Claude Mythos 5) was absent from the price table.
+/// Reuses the same idempotent recompute as v6.
+fn apply_v7(conn: &Connection) -> SqlResult<()> {
     recompute_costs(conn)
 }
 
@@ -428,7 +441,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, "6");
+        assert_eq!(version, "7");
     }
 
     #[test]
@@ -895,5 +908,107 @@ mod tests {
             .unwrap();
 
         assert_eq!(cost, 0.0, "unknown model must keep cost at 0");
+    }
+
+    // -----------------------------------------------------------------------
+    // Migration v7 — recompute cost tests (Fable/Mythos backfill)
+    // -----------------------------------------------------------------------
+
+    /// A pre-fix Fable 5 row (stored with `cost = 0`) must be repaired to a
+    /// non-zero cost matching `pricing::cost` after `apply_v7`.
+    #[test]
+    fn test_v7_recompute_fixes_zero_cost_fable() {
+        let conn = test_conn();
+
+        let row = UsageEventRow {
+            dedup_key: "msg_f5:req_f5",
+            session_id: "sess_f5",
+            project_path: "/Users/x/dev/tub2",
+            project_name: "tub2",
+            model: "claude-fable-5",
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_creation_tokens: 50,
+            cache_read_tokens: 20,
+            total_tokens: 1_170,
+            cost: 0.0, // pre-fix: stored as zero
+            timestamp: "2026-07-01T00:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-07-01T00:00:01Z",
+        };
+        insert_event(&conn, &row).unwrap();
+
+        apply_v7(&conn).unwrap();
+
+        let cost: f64 = conn
+            .query_row(
+                "SELECT cost FROM usage_events WHERE dedup_key = 'msg_f5:req_f5'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let expected = crate::pricing::cost(
+            "claude-fable-5",
+            &crate::pricing::Usage {
+                input_tokens: 1_000,
+                output_tokens: 100,
+                cache_creation_tokens: 50,
+                cache_read_tokens: 20,
+            },
+        );
+        assert!(
+            (cost - expected).abs() < 1e-9,
+            "got {cost}, want {expected}"
+        );
+        assert!(cost > 0.0, "fable 5 cost must be repaired to non-zero");
+    }
+
+    /// Running `apply_v7` a second time must not change an already-recomputed
+    /// cost — the recompute is a pure, deterministic function of stored data.
+    #[test]
+    fn test_v7_recompute_idempotent() {
+        let conn = test_conn();
+
+        let row = UsageEventRow {
+            dedup_key: "msg_f5_idem:req_f5_idem",
+            session_id: "sess_f5_idem",
+            project_path: "/Users/x/dev/tub2",
+            project_name: "tub2",
+            model: "claude-fable-5",
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_creation_tokens: 50,
+            cache_read_tokens: 20,
+            total_tokens: 1_170,
+            cost: 0.0,
+            timestamp: "2026-07-01T00:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-07-01T00:00:01Z",
+        };
+        insert_event(&conn, &row).unwrap();
+
+        apply_v7(&conn).unwrap();
+        let cost_after_first: f64 = conn
+            .query_row(
+                "SELECT cost FROM usage_events WHERE dedup_key = 'msg_f5_idem:req_f5_idem'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        apply_v7(&conn).unwrap();
+        let cost_after_second: f64 = conn
+            .query_row(
+                "SELECT cost FROM usage_events WHERE dedup_key = 'msg_f5_idem:req_f5_idem'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(
+            cost_after_first, cost_after_second,
+            "second run of apply_v7 must not change cost"
+        );
     }
 }

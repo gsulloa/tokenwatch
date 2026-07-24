@@ -4,10 +4,13 @@
 //!   `cost = input*Pin + output*Pout + cache_creation*Pwrite + cache_read*Pread`
 //!
 //! Source: Anthropic Claude pricing page and LiteLLM
-//! `model_prices_and_context_window.json` (verified 2026-07-03).
+//! `model_prices_and_context_window.json` (verified 2026-07-24).
 //!
 //! Cache write multiplier: 1.25× input; cache read multiplier: 0.1× input —
 //! standard Anthropic v1 rates (no split 1h/5m in this version).
+//!
+//! Claude Fable 5 and Claude Mythos 5 are a premium tier priced above Opus
+//! (verified 2026-07-24 from platform.claude.com): $10/M in, $50/M out.
 //!
 //! Models absent from the table return cost=0.0 and emit a tracing warning.
 
@@ -44,6 +47,10 @@ impl PriceRow {
 const OPUS: PriceRow = PriceRow::new(5.00, 25.00, 6.25, 0.50);
 const SONNET: PriceRow = PriceRow::new(3.00, 15.00, 3.75, 0.30);
 const HAIKU: PriceRow = PriceRow::new(1.00, 5.00, 1.25, 0.10);
+// Covers Claude Fable 5 and Claude Mythos 5 (identical pricing, differ only
+// by distribution channel); cache write/read follow the module's documented
+// 1.25x / 0.1x convention.
+const FABLE: PriceRow = PriceRow::new(10.00, 50.00, 12.50, 1.00);
 
 /// Return the price row for a given model string, or `None` if unknown.
 fn price_row(model: &str) -> Option<PriceRow> {
@@ -55,6 +62,8 @@ fn price_row(model: &str) -> Option<PriceRow> {
         Some(SONNET)
     } else if model.contains("haiku") {
         Some(HAIKU)
+    } else if model.contains("fable") || model.contains("mythos") {
+        Some(FABLE)
     } else {
         None
     }
@@ -104,6 +113,15 @@ mod tests {
         let row = price_row("claude-haiku-4-5").unwrap();
         assert!((row.input - 1.00).abs() < f64::EPSILON);
         assert!((row.output - 5.00).abs() < f64::EPSILON);
+
+        let row = price_row("claude-fable-5").unwrap();
+        assert!((row.input - 10.00).abs() < f64::EPSILON);
+        assert!((row.output - 50.00).abs() < f64::EPSILON);
+        assert!((row.cache_write - 12.50).abs() < f64::EPSILON);
+        assert!((row.cache_read - 1.00).abs() < f64::EPSILON);
+
+        let row = price_row("claude-mythos-5").unwrap();
+        assert!((row.input - 10.00).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -172,6 +190,23 @@ mod tests {
     }
 
     #[test]
+    fn test_cost_fable_known_fixture() {
+        // input=1000 * 10.0/1_000_000 = 0.01
+        // output=100 * 50.0/1_000_000 = 0.005
+        // cache_write=500 * 12.5/1_000_000 = 0.00625
+        // cache_read=2000 * 1.0/1_000_000 = 0.002
+        // total = 0.02325
+        let usage = Usage {
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_creation_tokens: 500,
+            cache_read_tokens: 2_000,
+        };
+        let c = cost("claude-fable-5", &usage);
+        assert!((c - 0.02325).abs() < 1e-9, "got {c}");
+    }
+
+    #[test]
     fn test_cost_unknown_model_returns_zero() {
         let usage = Usage {
             input_tokens: 1_000,
@@ -203,6 +238,9 @@ mod tests {
             "claude-sonnet-5",
             "claude-opus-5",
             "claude-haiku-5",
+            "claude-fable-5",
+            "claude-mythos-5",
+            "claude-mythos-preview",
         ];
         for model in models {
             assert!(
