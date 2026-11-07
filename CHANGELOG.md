@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-07
+
+### Fixed
+- fall back to weekly % when session window is absent and fix tray popover on macOS 27 (#39)
+- price Claude Fable 5 / Mythos 5 and backfill zero-cost events (schema v7) (#38)
+
+
+
 ## [0.2.6] - 2026-07-14
 
 ### Fixed
