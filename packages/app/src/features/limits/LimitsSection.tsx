@@ -43,6 +43,26 @@ function UnavailableMessage({ reason }: UnavailableMessageProps) {
   );
 }
 
+function InactiveSessionRow() {
+  return (
+    <div
+      role="status"
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+      }}
+    >
+      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>
+        Sesión 5h
+      </span>
+      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        Sin sesión activa
+      </span>
+    </div>
+  );
+}
+
 interface LimitsSectionProps {
   snapshot: LimitsSnapshot | null;
   loading?: boolean;
@@ -108,6 +128,8 @@ export function LimitsSection({ snapshot, loading = false }: LimitsSectionProps)
               windowMs={5 * 60 * 60 * 1000}
             />
           )}
+
+          {!snapshot.session && snapshot.weekly && <InactiveSessionRow />}
 
           {snapshot.weekly && (
             <LimitGauge

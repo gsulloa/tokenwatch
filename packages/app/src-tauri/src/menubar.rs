@@ -54,13 +54,23 @@ impl BadgeMode {
 /// after startup without recreating the icon (which would drop its position).
 pub struct TrayHandle(pub std::sync::Mutex<Option<tauri::tray::TrayIcon>>);
 
+/// Prefix shown when the weekly window stands in for a missing session.
+const WEEK_FALLBACK_PREFIX: &str = "W ";
+
+fn pct(p: f64) -> String {
+    format!("{}%", p.round() as i64)
+}
+
 /// Compute the badge text for a mode + snapshot.
 ///
 /// - `Off` → `None` (icon only).
 /// - Otherwise → `Some("N%")` when the snapshot is `Ok` and the relevant window
-///   exists; `Some("–")` when the snapshot is missing/unavailable or the window
-///   is absent. Never returns a stale value — that is the caller's concern
-///   (it always passes the latest known snapshot).
+///   exists; `Some("–")` when the snapshot is missing/unavailable or no
+///   applicable window exists. In `Session` mode with no active session, the
+///   weekly window is shown instead, prefixed with [`WEEK_FALLBACK_PREFIX`]
+///   (e.g. `"W 56%"`) so it is not mistaken for the session. Never returns a
+///   stale value — that is the caller's concern (it always passes the latest
+///   known snapshot).
 pub fn format_badge(mode: BadgeMode, snapshot: Option<&LimitsSnapshot>) -> Option<String> {
     if mode == BadgeMode::Off {
         return None;
@@ -77,20 +87,20 @@ fn badge_text(mode: BadgeMode, snapshot: Option<&LimitsSnapshot>) -> String {
     }
     let session = snap.session.as_ref().map(|w| w.utilization);
     let weekly = snap.weekly.as_ref().map(|w| w.utilization);
-    let pct = match mode {
-        BadgeMode::Session => session,
-        BadgeMode::Week => weekly,
-        BadgeMode::Max => match (session, weekly) {
-            (Some(a), Some(b)) => Some(a.max(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
+    match mode {
+        BadgeMode::Session => match (session, weekly) {
+            (Some(s), _) => pct(s),
+            (None, Some(w)) => format!("{WEEK_FALLBACK_PREFIX}{}", pct(w)),
+            (None, None) => "–".to_owned(),
         },
-        BadgeMode::Off => None,
-    };
-    match pct {
-        Some(p) => format!("{}%", p.round() as i64),
-        None => "–".to_owned(),
+        BadgeMode::Week => weekly.map(pct).unwrap_or_else(|| "–".to_owned()),
+        BadgeMode::Max => match (session, weekly) {
+            (Some(a), Some(b)) => pct(a.max(b)),
+            (Some(a), None) => pct(a),
+            (None, Some(b)) => pct(b),
+            (None, None) => "–".to_owned(),
+        },
+        BadgeMode::Off => "–".to_owned(),
     }
 }
 
@@ -256,11 +266,38 @@ mod tests {
     }
 
     #[test]
-    fn missing_window_in_ok_snapshot_shows_dash() {
+    fn session_mode_falls_back_to_weekly_with_prefix() {
         let s = snap_ok(None, Some(56.0));
         assert_eq!(
             format_badge(BadgeMode::Session, Some(&s)),
+            Some("W 56%".to_owned())
+        );
+    }
+
+    #[test]
+    fn session_mode_without_any_window_shows_dash() {
+        let s = snap_ok(None, None);
+        assert_eq!(
+            format_badge(BadgeMode::Session, Some(&s)),
             Some("–".to_owned())
+        );
+    }
+
+    #[test]
+    fn week_mode_missing_weekly_shows_dash() {
+        let s = snap_ok(Some(45.0), None);
+        assert_eq!(
+            format_badge(BadgeMode::Week, Some(&s)),
+            Some("–".to_owned())
+        );
+    }
+
+    #[test]
+    fn max_mode_never_uses_prefix() {
+        let s = snap_ok(None, Some(56.0));
+        assert_eq!(
+            format_badge(BadgeMode::Max, Some(&s)),
+            Some("56%".to_owned())
         );
     }
 

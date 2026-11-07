@@ -9,7 +9,7 @@
 //! - `get_alerts_muted`   — read the mute flag
 //! - `set_alerts_muted`   — write the mute flag
 
-use chrono::{Duration, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -129,8 +129,7 @@ pub fn current_session_window(state: &AppState) -> Option<(String, String, f64)>
 
 #[derive(Debug, Deserialize, Default)]
 struct ApiResponse {
-    #[serde(default)]
-    limits: Vec<ApiLimit>,
+    limits: Option<Vec<serde_json::Value>>,
     five_hour: Option<ApiTopLevel>,
     seven_day: Option<ApiTopLevel>,
     seven_day_opus: Option<ApiTopLevel>,
@@ -139,8 +138,19 @@ struct ApiResponse {
 
 #[derive(Debug, Deserialize)]
 struct ApiTopLevel {
-    utilization: f64,
-    resets_at: String,
+    utilization: Option<f64>,
+    resets_at: Option<String>,
+}
+
+/// Convert a top-level window (`five_hour`, `seven_day`, ...) into a [`Window`].
+/// Returns `None` when absent or when either field is missing/null.
+fn top_level_window(t: Option<ApiTopLevel>, label: Option<&str>) -> Option<Window> {
+    let t = t?;
+    Some(Window {
+        label: label.map(str::to_owned),
+        utilization: t.utilization?,
+        resets_at: t.resets_at?,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -313,7 +323,7 @@ async fn fetch_usage(token: &str) -> Result<LimitsSnapshot, String> {
             "parse".to_owned()
         })?;
 
-        return parse_api_response(api);
+        return parse_api_response(api, Utc::now());
     }
 
     // Exhausted retries.
@@ -355,93 +365,99 @@ fn reconcile_with_cache(fresh: LimitsSnapshot, state: &AppState) -> LimitsSnapsh
     result
 }
 
-fn parse_api_response(api: ApiResponse) -> Result<LimitsSnapshot, String> {
+fn parse_api_response(api: ApiResponse, now: DateTime<Utc>) -> Result<LimitsSnapshot, String> {
     let mut session: Option<Window> = None;
     let mut weekly: Option<Window> = None;
-    let mut weekly_by_model: Vec<Window> = Vec::new();
+    let mut scoped: Vec<Window> = Vec::new();
+    let mut seen_kinds: Vec<String> = Vec::new();
 
-    if !api.limits.is_empty() {
-        for limit in &api.limits {
-            let kind = match &limit.kind {
-                Some(k) => k.as_str(),
-                None => continue,
-            };
-            let utilization = match limit.percent {
-                Some(p) => p,
-                None => continue,
-            };
-            let resets_at = match &limit.resets_at {
-                Some(r) => r.clone(),
-                None => continue,
-            };
+    // Rows are deserialized one by one so a malformed row is skipped instead of
+    // failing the whole response.
+    let rows = api
+        .limits
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| serde_json::from_value::<ApiLimit>(v).ok());
 
-            match kind {
-                "session" => {
-                    session = Some(Window {
-                        label: None,
-                        utilization,
-                        resets_at,
-                    });
-                }
-                "weekly_all" => {
-                    weekly = Some(Window {
-                        label: None,
-                        utilization,
-                        resets_at,
-                    });
-                }
-                "weekly_scoped" => {
-                    let label = limit
-                        .scope
-                        .as_ref()
-                        .and_then(|s| s.model.as_ref())
-                        .and_then(|m| m.display_name.clone());
-                    weekly_by_model.push(Window {
-                        label,
-                        utilization,
-                        resets_at,
-                    });
-                }
-                _ => {}
+    for limit in rows {
+        let Some(kind) = limit.kind.as_deref() else {
+            continue;
+        };
+        seen_kinds.push(kind.to_owned());
+        let (Some(utilization), Some(resets_at)) = (limit.percent, limit.resets_at.clone()) else {
+            continue;
+        };
+
+        match kind {
+            "session" => {
+                session = Some(Window {
+                    label: None,
+                    utilization,
+                    resets_at,
+                });
+            }
+            "weekly_all" => {
+                weekly = Some(Window {
+                    label: None,
+                    utilization,
+                    resets_at,
+                });
+            }
+            "weekly_scoped" => {
+                let label = limit
+                    .scope
+                    .as_ref()
+                    .and_then(|s| s.model.as_ref())
+                    .and_then(|m| m.display_name.clone());
+                scoped.push(Window {
+                    label,
+                    utilization,
+                    resets_at,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let had_five_hour = api.five_hour.is_some();
+
+    // Per-window merge: `limits[]` wins, top-level fields fill the gaps.
+    let mut session = session.or_else(|| top_level_window(api.five_hour, None));
+    let weekly = weekly.or_else(|| top_level_window(api.seven_day, None));
+    let weekly_by_model = if scoped.is_empty() {
+        [
+            top_level_window(api.seven_day_opus, Some("Opus")),
+            top_level_window(api.seven_day_sonnet, Some("Sonnet")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    } else {
+        scoped
+    };
+
+    // A session whose reset moment already passed is stale: there is no active session.
+    if let Some(s) = &session {
+        if let Ok(reset) = DateTime::parse_from_rfc3339(&s.resets_at) {
+            if reset.with_timezone(&Utc) < now {
+                session = None;
             }
         }
-    } else {
-        // Fallback: use top-level fields.
-        if let Some(fh) = api.five_hour {
-            session = Some(Window {
-                label: None,
-                utilization: fh.utilization,
-                resets_at: fh.resets_at,
-            });
-        }
-        if let Some(sd) = api.seven_day {
-            weekly = Some(Window {
-                label: None,
-                utilization: sd.utilization,
-                resets_at: sd.resets_at,
-            });
-        }
-        if let Some(opus) = api.seven_day_opus {
-            weekly_by_model.push(Window {
-                label: Some("Opus".to_owned()),
-                utilization: opus.utilization,
-                resets_at: opus.resets_at,
-            });
-        }
-        if let Some(sonnet) = api.seven_day_sonnet {
-            weekly_by_model.push(Window {
-                label: Some("Sonnet".to_owned()),
-                utilization: sonnet.utilization,
-                resets_at: sonnet.resets_at,
-            });
-        }
+    }
+
+    if session.is_none() {
+        tracing::info!(
+            "limits: no active session window (kinds seen: {:?}, five_hour present: {})",
+            seen_kinds,
+            had_five_hour
+        );
     }
 
     Ok(LimitsSnapshot {
         session,
         weekly,
         weekly_by_model,
-        fetched_at: Utc::now().to_rfc3339(),
+        fetched_at: now.to_rfc3339(),
         status: LimitsStatus::Ok,
     })
 }
@@ -799,5 +815,149 @@ mod tests {
         let (result, should_write) = choose_snapshot(fresh, Some(cached));
         assert!(!should_write);
         assert!(matches!(result.status, LimitsStatus::Unavailable { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_api_response
+    // -----------------------------------------------------------------------
+
+    fn parse(json: &str) -> LimitsSnapshot {
+        let now = DateTime::parse_from_rfc3339("2026-11-07T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let api: ApiResponse = serde_json::from_str(json).expect("api json");
+        parse_api_response(api, now).expect("parse ok")
+    }
+
+    #[test]
+    fn parse_limits_with_session_row() {
+        let s = parse(
+            r#"{"limits":[
+                {"kind":"session","percent":12.5,"resets_at":"2026-11-07T15:00:00Z"},
+                {"kind":"weekly_all","percent":56.0,"resets_at":"2026-11-10T00:00:00Z"}
+            ]}"#,
+        );
+        assert_eq!(s.session.as_ref().unwrap().utilization, 12.5);
+        assert_eq!(s.weekly.as_ref().unwrap().utilization, 56.0);
+        assert!(s.weekly_by_model.is_empty());
+    }
+
+    #[test]
+    fn parse_falls_back_to_five_hour_when_limits_lack_session() {
+        let s = parse(
+            r#"{"limits":[{"kind":"weekly_all","percent":56.0,"resets_at":"2026-11-10T00:00:00Z"}],
+                "five_hour":{"utilization":30.0,"resets_at":"2026-11-07T16:00:00Z"}}"#,
+        );
+        let sess = s.session.unwrap();
+        assert_eq!(sess.utilization, 30.0);
+        assert_eq!(sess.resets_at, "2026-11-07T16:00:00Z");
+        assert_eq!(s.weekly.unwrap().utilization, 56.0);
+    }
+
+    #[test]
+    fn parse_without_session_anywhere_keeps_weekly() {
+        for json in [
+            r#"{"limits":[{"kind":"weekly_all","percent":56.0,"resets_at":"2026-11-10T00:00:00Z"}]}"#,
+            r#"{"limits":[{"kind":"weekly_all","percent":56.0,"resets_at":"2026-11-10T00:00:00Z"}],"five_hour":null}"#,
+        ] {
+            let s = parse(json);
+            assert!(s.session.is_none());
+            assert_eq!(s.weekly.unwrap().utilization, 56.0);
+            assert!(matches!(s.status, LimitsStatus::Ok));
+        }
+    }
+
+    #[test]
+    fn parse_five_hour_with_null_fields_does_not_fail() {
+        let s = parse(
+            r#"{"five_hour":{"utilization":null,"resets_at":null},
+                "seven_day":{"utilization":40.0,"resets_at":"2026-11-10T00:00:00Z"}}"#,
+        );
+        assert!(s.session.is_none());
+        assert_eq!(s.weekly.unwrap().utilization, 40.0);
+    }
+
+    #[test]
+    fn parse_limits_null_does_not_fail() {
+        let s = parse(
+            r#"{"limits":null,
+                "five_hour":{"utilization":10.0,"resets_at":"2026-11-07T16:00:00Z"}}"#,
+        );
+        assert_eq!(s.session.unwrap().utilization, 10.0);
+    }
+
+    #[test]
+    fn parse_weekly_scoped_rows_produce_labelled_windows() {
+        let s = parse(
+            r#"{"limits":[{"kind":"weekly_scoped","percent":22.0,"resets_at":"2026-11-10T00:00:00Z",
+                "scope":{"model":{"display_name":"Fable"}}}]}"#,
+        );
+        assert_eq!(s.weekly_by_model.len(), 1);
+        assert_eq!(s.weekly_by_model[0].label.as_deref(), Some("Fable"));
+        assert_eq!(s.weekly_by_model[0].utilization, 22.0);
+    }
+
+    #[test]
+    fn limits_session_wins_over_five_hour() {
+        let s = parse(
+            r#"{"limits":[{"kind":"session","percent":12.0,"resets_at":"2026-11-07T15:00:00Z"}],
+                "five_hour":{"utilization":99.0,"resets_at":"2026-11-07T16:00:00Z"}}"#,
+        );
+        let sess = s.session.unwrap();
+        assert_eq!(sess.utilization, 12.0);
+        assert_eq!(sess.resets_at, "2026-11-07T15:00:00Z");
+    }
+
+    #[test]
+    fn expired_session_is_dropped() {
+        let s = parse(
+            r#"{"limits":[
+                {"kind":"session","percent":80.0,"resets_at":"2026-11-07T11:00:00Z"},
+                {"kind":"weekly_all","percent":56.0,"resets_at":"2026-11-10T00:00:00Z"}]}"#,
+        );
+        assert!(s.session.is_none());
+        assert!(s.weekly.is_some());
+    }
+
+    #[test]
+    fn malformed_row_is_skipped() {
+        let s = parse(
+            r#"{"limits":[
+                {"kind":"session","percent":"abc","resets_at":"2026-11-07T15:00:00Z"},
+                {"kind":"weekly_all","percent":56.0,"resets_at":"2026-11-10T00:00:00Z"}]}"#,
+        );
+        assert!(s.session.is_none());
+        assert_eq!(s.weekly.unwrap().utilization, 56.0);
+    }
+
+    #[test]
+    fn scoped_rows_suppress_top_level_opus_sonnet() {
+        let s = parse(
+            r#"{"limits":[{"kind":"weekly_scoped","percent":22.0,"resets_at":"2026-11-10T00:00:00Z",
+                "scope":{"model":{"display_name":"Fable"}}}],
+                "seven_day_opus":{"utilization":5.0,"resets_at":"2026-11-10T00:00:00Z"},
+                "seven_day_sonnet":{"utilization":6.0,"resets_at":"2026-11-10T00:00:00Z"}}"#,
+        );
+        assert_eq!(s.weekly_by_model.len(), 1);
+        assert_eq!(s.weekly_by_model[0].label.as_deref(), Some("Fable"));
+    }
+
+    #[test]
+    fn empty_limits_uses_top_level() {
+        let s = parse(
+            r#"{"limits":[],
+                "five_hour":{"utilization":10.0,"resets_at":"2026-11-07T16:00:00Z"},
+                "seven_day":{"utilization":40.0,"resets_at":"2026-11-10T00:00:00Z"},
+                "seven_day_opus":{"utilization":5.0,"resets_at":"2026-11-10T00:00:00Z"},
+                "seven_day_sonnet":{"utilization":6.0,"resets_at":"2026-11-10T00:00:00Z"}}"#,
+        );
+        assert_eq!(s.session.unwrap().utilization, 10.0);
+        assert_eq!(s.weekly.unwrap().utilization, 40.0);
+        let labels: Vec<_> = s
+            .weekly_by_model
+            .iter()
+            .map(|w| w.label.clone().unwrap())
+            .collect();
+        assert_eq!(labels, vec!["Opus", "Sonnet"]);
     }
 }

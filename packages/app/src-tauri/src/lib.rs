@@ -4,6 +4,7 @@ pub mod db;
 pub mod ingest;
 pub mod limits;
 pub mod menubar;
+pub mod popover;
 pub mod pricing;
 pub mod usage;
 
@@ -11,6 +12,7 @@ use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
 use tauri_plugin_updater::Builder as UpdaterBuilder;
+use tauri_plugin_window_state::StateFlags;
 
 use usage::AppState;
 
@@ -24,7 +26,16 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            // Never persist the popover (a tray NSPanel whose size/visibility must
+            // not be restored). For the dashboard, never restore FULLSCREEN or
+            // VISIBLE: a stale fullscreen/visible `main` would create a Space or
+            // show a window at launch, contradicting "hidden at startup".
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["popover"])
+                .with_state_flags(StateFlags::all() - StateFlags::FULLSCREEN - StateFlags::VISIBLE)
+                .build(),
+        )
         .plugin(tauri_plugin_process::init())
         .plugin(UpdaterBuilder::new().build())
         .plugin(tauri_plugin_notification::init());
@@ -38,6 +49,9 @@ pub fn run() {
             // macOS menu-bar mode: no Dock icon.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // Timing state used to disambiguate popover show/hide races.
+            app.manage(popover::PopoverTiming::default());
 
             // Open the database and apply migrations.
             let conn = db::open_default().expect("failed to open TokenWatch database");
@@ -80,13 +94,25 @@ pub fn run() {
                     .get_webview_window("popover")
                     .expect("popover window must exist");
 
-                let panel = popover_win.to_panel().unwrap();
+                // Keep the existing style-mask bits and OR in NonactivatingPanel
+                // (replacing the whole mask can drop bits macOS needs). Done on
+                // the NSWindow before it is converted to a panel; setup runs on
+                // the main thread.
+                if let Ok(ptr) = popover_win.ns_window() {
+                    if !ptr.is_null() {
+                        // SAFETY: valid NSWindow pointer owned by tao, used
+                        // synchronously on the main thread.
+                        let ns: &objc2_app_kit::NSWindow =
+                            unsafe { &*(ptr as *const objc2_app_kit::NSWindow) };
+                        ns.setStyleMask(
+                            ns.styleMask() | objc2_app_kit::NSWindowStyleMask::NonactivatingPanel,
+                        );
+                        // Float above the menu bar itself.
+                        ns.setLevel(objc2_app_kit::NSPopUpMenuWindowLevel);
+                    }
+                }
 
-                // Non-activating panel: clicking shows the panel without
-                // activating our app, so no Space-switch occurs.
-                #[allow(non_upper_case_globals)]
-                const NSWindowStyleMaskNonActivatingPanel: i32 = 1 << 7;
-                panel.set_style_mask(NSWindowStyleMaskNonActivatingPanel);
+                let panel = popover_win.to_panel().unwrap();
 
                 // Collection behavior:
                 //   CanJoinAllSpaces    — always on the active Space
@@ -98,29 +124,53 @@ pub fn run() {
                         | NSWindowCollectionBehavior::NSWindowCollectionBehaviorStationary,
                 );
 
-                // Raise to NSPopUpMenuWindowLevel (101) so it floats above
-                // the menu bar itself.
-                #[allow(non_upper_case_globals)]
-                const NSPopUpMenuWindowLevel: i32 = 101;
-                panel.set_level(NSPopUpMenuWindowLevel);
+                // NSPanel defaults to hidesOnDeactivate = YES; an Accessory app
+                // that was never activated is permanently "inactive", so AppKit
+                // would hide the panel immediately.
+                panel.set_hides_on_deactivate(false);
 
-                // Auto-hide when the panel loses key status (focus lost).
+                // Auto-hide when the panel loses key status (focus lost), except
+                // for a spurious resign right after showing.
                 let delegate = panel_delegate!(PopoverPanelDelegate {
                     window_did_resign_key
                 });
 
                 let app_handle = app.handle().clone();
                 delegate.set_listener(Box::new(move |delegate_name: String| {
-                    if delegate_name == "window_did_resign_key" {
-                        if let Ok(p) =
-                            tauri_nspanel::ManagerExt::get_webview_panel(&app_handle, "popover")
-                        {
-                            p.order_out(None);
-                        }
+                    if delegate_name != "window_did_resign_key" {
+                        return;
+                    }
+                    let now = std::time::Instant::now();
+                    let timing = app_handle.state::<popover::PopoverTiming>();
+                    let shown_at = *timing.shown_at.lock().unwrap();
+                    let since_show_ms =
+                        shown_at.map(|t| now.saturating_duration_since(t).as_millis());
+                    tracing::info!(
+                        target: "tokenwatch::popover",
+                        ?since_show_ms,
+                        "window_did_resign_key"
+                    );
+                    if popover::within(shown_at, now, popover::SHOW_GRACE) {
+                        tracing::info!(target: "tokenwatch::popover", "resign ignored");
+                        let handle = app_handle.clone();
+                        let _ = app_handle.run_on_main_thread(move || {
+                            if let Ok(p) =
+                                tauri_nspanel::ManagerExt::get_webview_panel(&handle, "popover")
+                            {
+                                p.make_key_window();
+                            }
+                        });
+                    } else if let Ok(p) =
+                        tauri_nspanel::ManagerExt::get_webview_panel(&app_handle, "popover")
+                    {
+                        p.order_out(None);
+                        *timing.hidden_by_resign_at.lock().unwrap() = Some(now);
                     }
                 }));
 
                 panel.set_delegate(delegate);
+
+                popover::log_panel_state(&popover_win, "after_setup");
             }
 
             // ----------------------------------------------------------------
@@ -247,20 +297,77 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     use tauri_nspanel::ManagerExt;
 
                     if let Ok(panel) = app.get_webview_panel("popover") {
-                        if panel.is_visible() {
+                        let now = std::time::Instant::now();
+                        let timing = app.state::<popover::PopoverTiming>();
+                        let visible = panel.is_visible();
+                        tracing::info!(
+                            target: "tokenwatch::popover",
+                            x = position.x,
+                            y = position.y,
+                            visible,
+                            "tray click"
+                        );
+                        if visible {
                             panel.order_out(None);
+                        } else if popover::within(
+                            *timing.hidden_by_resign_at.lock().unwrap(),
+                            now,
+                            popover::RESIGN_CLICK_DEBOUNCE,
+                        ) {
+                            // The mouse-down already hid the panel via resign key;
+                            // this click only dismisses it.
+                            tracing::info!(target: "tokenwatch::popover", "dismiss click");
+                            *timing.hidden_by_resign_at.lock().unwrap() = None;
                         } else {
-                            // Use the WebviewWindow handle only for positioning;
-                            // the panel's own show() makes it key without
-                            // activating the app.
+                            // Use the WebviewWindow handle only for positioning.
                             if let Some(win) = app.get_webview_window("popover") {
                                 position_popover_near_click(&win, position);
+                                popover::log_panel_state(&win, "before_show");
                             }
-                            panel.show();
-                            // Becoming key as a panel can leave the webview
-                            // scrolled to the bottom; tell the frontend to pin
-                            // its scroll position back to the top.
-                            let _ = app.emit("popover-shown", ());
+                            let handle = app.clone();
+                            let _ = app.run_on_main_thread(move || {
+                                use tauri_nspanel::ManagerExt;
+                                let Ok(panel) = handle.get_webview_panel("popover") else {
+                                    return;
+                                };
+                                let timing = handle.state::<popover::PopoverTiming>();
+                                *timing.shown_at.lock().unwrap() = Some(std::time::Instant::now());
+                                panel.show();
+                                if !panel.is_visible() {
+                                    tracing::warn!(
+                                        target: "tokenwatch::popover",
+                                        "show() left panel invisible; forcing front"
+                                    );
+                                    panel.order_front_regardless();
+                                    panel.make_key_window();
+                                }
+                                if let Some(win) = handle.get_webview_window("popover") {
+                                    popover::log_panel_state(&win, "after_show");
+                                }
+                                // Becoming key as a panel can leave the webview
+                                // scrolled to the bottom; tell the frontend to pin
+                                // its scroll position back to the top.
+                                let _ = handle.emit("popover-shown", ());
+
+                                // Next run-loop turn.
+                                let h2 = handle.clone();
+                                let _ = handle.run_on_main_thread(move || {
+                                    if let Some(win) = h2.get_webview_window("popover") {
+                                        popover::log_panel_state(&win, "next_tick");
+                                    }
+                                });
+                                // 500 ms later.
+                                let h3 = handle.clone();
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(std::time::Duration::from_millis(500));
+                                    let h4 = h3.clone();
+                                    let _ = h3.run_on_main_thread(move || {
+                                        if let Some(win) = h4.get_webview_window("popover") {
+                                            popover::log_panel_state(&win, "after_500ms");
+                                        }
+                                    });
+                                });
+                            });
                         }
                     }
                 }
