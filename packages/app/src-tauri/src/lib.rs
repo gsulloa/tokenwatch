@@ -6,6 +6,8 @@ pub mod limits;
 pub mod menubar;
 pub mod popover;
 pub mod pricing;
+#[cfg(target_os = "macos")]
+pub mod tray_macos;
 pub mod usage;
 
 use std::sync::Mutex;
@@ -237,9 +239,18 @@ pub fn run() {
 // Tray icon setup
 // ---------------------------------------------------------------------------
 
+/// Id of the single tray icon, used to look it up from AppKit callbacks.
+pub const TRAY_ID: &str = "tokenwatch-tray";
+
+/// The tray context menu, kept alive in managed state. On macOS it is NOT
+/// attached to the status item (an attached menu makes AppKit swallow left
+/// clicks); it is attached only transiently for right-click.
+#[cfg(target_os = "macos")]
+pub struct TrayMenu(pub tauri::menu::Menu<tauri::Wry>);
+
 fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::tray::TrayIconBuilder;
 
     let dashboard_item = MenuItemBuilder::with_id("dashboard", "Abrir dashboard").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Salir").build(app)?;
@@ -253,11 +264,9 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // dark ones — instead of reusing the full-color app icon.
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/menubar-template.png"))?;
 
-    let tray = TrayIconBuilder::new()
+    let builder = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .icon_as_template(true)
-        .menu(&menu)
-        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "dashboard" => {
                 // Switch to Regular first so the dashboard can come to the front
@@ -277,119 +286,39 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 app.exit(0);
             }
             _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                position,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
+        });
 
-                // ----------------------------------------------------------
-                // macOS: use the NSPanel API so the popover appears over
-                // fullscreen Spaces without activating our app.
-                // ----------------------------------------------------------
-                #[cfg(target_os = "macos")]
+    // Non-macOS: the menu is attached to the tray and the library reports
+    // clicks through `TrayIconEvent`.
+    #[cfg(not(target_os = "macos"))]
+    let builder = {
+        use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+        builder
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    position,
+                    ..
+                } = event
                 {
-                    use tauri_nspanel::ManagerExt;
-
-                    if let Ok(panel) = app.get_webview_panel("popover") {
-                        let now = std::time::Instant::now();
-                        let timing = app.state::<popover::PopoverTiming>();
-                        let visible = panel.is_visible();
-                        tracing::info!(
-                            target: "tokenwatch::popover",
-                            x = position.x,
-                            y = position.y,
-                            visible,
-                            "tray click"
-                        );
-                        if visible {
-                            panel.order_out(None);
-                        } else if popover::within(
-                            *timing.hidden_by_resign_at.lock().unwrap(),
-                            now,
-                            popover::RESIGN_CLICK_DEBOUNCE,
-                        ) {
-                            // The mouse-down already hid the panel via resign key;
-                            // this click only dismisses it.
-                            tracing::info!(target: "tokenwatch::popover", "dismiss click");
-                            *timing.hidden_by_resign_at.lock().unwrap() = None;
-                        } else {
-                            // Use the WebviewWindow handle only for positioning.
-                            if let Some(win) = app.get_webview_window("popover") {
-                                position_popover_near_click(&win, position);
-                                popover::log_panel_state(&win, "before_show");
-                            }
-                            let handle = app.clone();
-                            let _ = app.run_on_main_thread(move || {
-                                use tauri_nspanel::ManagerExt;
-                                let Ok(panel) = handle.get_webview_panel("popover") else {
-                                    return;
-                                };
-                                let timing = handle.state::<popover::PopoverTiming>();
-                                *timing.shown_at.lock().unwrap() = Some(std::time::Instant::now());
-                                panel.show();
-                                if !panel.is_visible() {
-                                    tracing::warn!(
-                                        target: "tokenwatch::popover",
-                                        "show() left panel invisible; forcing front"
-                                    );
-                                    panel.order_front_regardless();
-                                    panel.make_key_window();
-                                }
-                                if let Some(win) = handle.get_webview_window("popover") {
-                                    popover::log_panel_state(&win, "after_show");
-                                }
-                                // Becoming key as a panel can leave the webview
-                                // scrolled to the bottom; tell the frontend to pin
-                                // its scroll position back to the top.
-                                let _ = handle.emit("popover-shown", ());
-
-                                // Next run-loop turn.
-                                let h2 = handle.clone();
-                                let _ = handle.run_on_main_thread(move || {
-                                    if let Some(win) = h2.get_webview_window("popover") {
-                                        popover::log_panel_state(&win, "next_tick");
-                                    }
-                                });
-                                // 500 ms later.
-                                let h3 = handle.clone();
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(std::time::Duration::from_millis(500));
-                                    let h4 = h3.clone();
-                                    let _ = h3.run_on_main_thread(move || {
-                                        if let Some(win) = h4.get_webview_window("popover") {
-                                            popover::log_panel_state(&win, "after_500ms");
-                                        }
-                                    });
-                                });
-                            });
-                        }
-                    }
+                    toggle_popover(tray.app_handle(), Some(position));
                 }
+            })
+    };
 
-                // ----------------------------------------------------------
-                // Non-macOS: plain WebviewWindow toggle.
-                // ----------------------------------------------------------
-                #[cfg(not(target_os = "macos"))]
-                {
-                    if let Some(win) = app.get_webview_window("popover") {
-                        if win.is_visible().unwrap_or(false) {
-                            let _ = win.hide();
-                        } else {
-                            position_popover_near_click(&win, position);
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
-                    }
-                }
-            }
-        })
-        .build(app)?;
+    let tray = builder.build(app)?;
+
+    // macOS: tray-icon's click overlay does not receive clicks on recent macOS
+    // releases and an attached menu would swallow left clicks. Own the button's
+    // action ourselves and keep the menu out of the status item.
+    #[cfg(target_os = "macos")]
+    {
+        app.manage(TrayMenu(menu));
+        tray_macos::install(app.handle(), &tray);
+    }
 
     // Keep the tray handle in managed state so the menu-bar badge can be
     // updated after startup without recreating the icon (which would drop its
@@ -400,25 +329,150 @@ fn build_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Reposition the popover window so it appears just below the menu bar at the
-/// x-position of the tray click.
+/// Hide the popover panel if it is currently visible (macOS).
+#[cfg(target_os = "macos")]
+pub(crate) fn hide_popover(app: &tauri::AppHandle) {
+    use tauri_nspanel::ManagerExt;
+    if let Ok(panel) = app.get_webview_panel("popover") {
+        if panel.is_visible() {
+            panel.order_out(None);
+        }
+    }
+}
+
+/// Toggle the popover. `click` is the tray click position, used for placement
+/// on non-macOS platforms; on macOS placement comes from the status button.
+pub(crate) fn toggle_popover(
+    app: &tauri::AppHandle,
+    #[allow(unused_variables)] click: Option<tauri::PhysicalPosition<f64>>,
+) {
+    // ----------------------------------------------------------
+    // macOS: use the NSPanel API so the popover appears over
+    // fullscreen Spaces without activating our app.
+    // ----------------------------------------------------------
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::ManagerExt;
+
+        if let Ok(panel) = app.get_webview_panel("popover") {
+            let now = std::time::Instant::now();
+            let timing = app.state::<popover::PopoverTiming>();
+            let visible = panel.is_visible();
+            tracing::info!(target: "tokenwatch::popover", visible, "toggle popover");
+            if visible {
+                panel.order_out(None);
+            } else if popover::within(
+                *timing.hidden_by_resign_at.lock().unwrap(),
+                now,
+                popover::RESIGN_CLICK_DEBOUNCE,
+            ) {
+                // The mouse-down already hid the panel via resign key;
+                // this click only dismisses it.
+                tracing::info!(target: "tokenwatch::popover", "dismiss click");
+                *timing.hidden_by_resign_at.lock().unwrap() = None;
+            } else {
+                // Use the WebviewWindow handle only for positioning.
+                if let Some(win) = app.get_webview_window("popover") {
+                    position_popover_below_status_item(app, &win);
+                    popover::log_panel_state(&win, "before_show");
+                }
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    use tauri_nspanel::ManagerExt;
+                    let Ok(panel) = handle.get_webview_panel("popover") else {
+                        return;
+                    };
+                    let timing = handle.state::<popover::PopoverTiming>();
+                    *timing.shown_at.lock().unwrap() = Some(std::time::Instant::now());
+                    panel.show();
+                    if !panel.is_visible() {
+                        tracing::warn!(
+                            target: "tokenwatch::popover",
+                            "show() left panel invisible; forcing front"
+                        );
+                        panel.order_front_regardless();
+                        panel.make_key_window();
+                    }
+                    if let Some(win) = handle.get_webview_window("popover") {
+                        popover::log_panel_state(&win, "after_show");
+                    }
+                    // Becoming key as a panel can leave the webview
+                    // scrolled to the bottom; tell the frontend to pin
+                    // its scroll position back to the top.
+                    let _ = handle.emit("popover-shown", ());
+
+                    // Next run-loop turn.
+                    let h2 = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        if let Some(win) = h2.get_webview_window("popover") {
+                            popover::log_panel_state(&win, "next_tick");
+                        }
+                    });
+                    // 500 ms later.
+                    let h3 = handle.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        let h4 = h3.clone();
+                        let _ = h3.run_on_main_thread(move || {
+                            if let Some(win) = h4.get_webview_window("popover") {
+                                popover::log_panel_state(&win, "after_500ms");
+                            }
+                        });
+                    });
+                });
+            }
+        }
+    }
+
+    // ----------------------------------------------------------
+    // Non-macOS: plain WebviewWindow toggle.
+    // ----------------------------------------------------------
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(win) = app.get_webview_window("popover") {
+            if win.is_visible().unwrap_or(false) {
+                let _ = win.hide();
+            } else {
+                if let Some(pos) = click {
+                    position_popover_near_click(&win, pos);
+                }
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }
+    }
+}
+
+/// macOS: place the popover just below the status item, centred on it and
+/// clamped to the screen it lives on.
+#[cfg(target_os = "macos")]
+fn position_popover_below_status_item(app: &tauri::AppHandle, win: &tauri::WebviewWindow) {
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let width = win
+        .outer_size()
+        .map(|s| s.width as f64 / scale)
+        .unwrap_or(360.0);
+    if let Some((x, y)) = tray_macos::popover_origin(app, width) {
+        tracing::info!(target: "tokenwatch::popover", x, y, "position popover");
+        let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+    } else {
+        tracing::warn!(target: "tokenwatch::popover", "status item frame unavailable");
+    }
+}
+
+/// Non-macOS: reposition the popover near the click, clamped to its monitor.
+#[cfg(not(target_os = "macos"))]
 fn position_popover_near_click(
     win: &tauri::WebviewWindow,
     click_pos: tauri::PhysicalPosition<f64>,
 ) {
-    // Get window size so we can centre it horizontally on the click x.
-    let (win_w, _) = win
-        .outer_size()
-        .map(|s| (s.width as f64, s.height as f64))
-        .unwrap_or((360.0, 480.0));
-
-    // Place the popover horizontally centred on the tray icon click, and just
-    // below the macOS menu bar (approximately 22 px).
-    let menu_bar_h: f64 = 22.0;
-    let x = (click_pos.x - win_w / 2.0).max(0.0);
-    let y = menu_bar_h;
-
-    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+    let win_w = win.outer_size().map(|s| s.width as f64).unwrap_or(360.0);
+    let mut x = (click_pos.x - win_w / 2.0).max(0.0);
+    if let Ok(Some(mon)) = win.current_monitor() {
+        let max_x = mon.position().x as f64 + mon.size().width as f64 - win_w - 8.0;
+        x = x.min(max_x.max(0.0));
+    }
+    let _ = win.set_position(tauri::PhysicalPosition::new(x, 22.0));
 }
 
 /// Assign the app's Dock icon at runtime (macOS).
