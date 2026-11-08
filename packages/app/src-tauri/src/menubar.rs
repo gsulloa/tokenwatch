@@ -139,6 +139,9 @@ pub fn apply_badge(app: &AppHandle) {
     if let Ok(guard) = guard {
         if let Some(tray) = guard.as_ref() {
             let _ = tray.set_title(title);
+            // tray-icon may resize/re-show its click overlay on title changes.
+            #[cfg(target_os = "macos")]
+            crate::tray_macos::hide_overlay(tray);
         }
     }
 }
