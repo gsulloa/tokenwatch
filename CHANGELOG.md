@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-08
+
+### Fixed
+- handle tray clicks directly on macOS 27 so the popover opens (#41)
+
+
+
 ## [0.3.0] - 2026-11-07
 
 ### Fixed
