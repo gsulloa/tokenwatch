@@ -96,14 +96,20 @@ pub fn run() {
                     .get_webview_window("popover")
                     .expect("popover window must exist");
 
-                // Keep the existing style-mask bits and OR in NonactivatingPanel
-                // (replacing the whole mask can drop bits macOS needs). Done on
-                // the NSWindow before it is converted to a panel; setup runs on
-                // the main thread.
+                let panel = popover_win.to_panel().unwrap();
+
+                // `NonactivatingPanel` MUST be set AFTER `to_panel()`: only
+                // `-[NSPanel setStyleMask:]` turns the bit into real
+                // non-activation (WindowServer "prevents activation" tag).
+                // Setting it on the plain NSWindow stores the bit but the panel
+                // still activates the app, which on another app's fullscreen
+                // Space switches Spaces / hides the popover (regression from
+                // #39). Keep the existing mask bits and OR the flag in.
                 if let Ok(ptr) = popover_win.ns_window() {
                     if !ptr.is_null() {
-                        // SAFETY: valid NSWindow pointer owned by tao, used
-                        // synchronously on the main thread.
+                        // SAFETY: valid pointer owned by tao; after `to_panel()`
+                        // its class is a NSPanel subclass. Used synchronously
+                        // on the main thread (setup).
                         let ns: &objc2_app_kit::NSWindow =
                             unsafe { &*(ptr as *const objc2_app_kit::NSWindow) };
                         ns.setStyleMask(
@@ -113,8 +119,6 @@ pub fn run() {
                         ns.setLevel(objc2_app_kit::NSPopUpMenuWindowLevel);
                     }
                 }
-
-                let panel = popover_win.to_panel().unwrap();
 
                 // Collection behavior:
                 //   CanJoinAllSpaces    — always on the active Space

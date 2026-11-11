@@ -33,8 +33,10 @@ pub fn within(since: Option<Instant>, now: Instant, window: Duration) -> bool {
 /// Must be called on the main thread; silently returns otherwise.
 #[cfg(target_os = "macos")]
 pub fn log_panel_state(win: &tauri::WebviewWindow, stage: &str) {
+    use objc2::runtime::NSObjectProtocol;
+    use objc2::ClassType;
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSWindow};
+    use objc2_app_kit::{NSApplication, NSPanel, NSWindow};
 
     let Some(mtm) = MainThreadMarker::new() else {
         tracing::warn!(target: "tokenwatch::popover", stage, "log_panel_state off main thread");
@@ -50,12 +52,14 @@ pub fn log_panel_state(win: &tauri::WebviewWindow, stage: &str) {
     // only borrow it for the duration of this call, on the main thread.
     let ns: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
     let app_active = NSApplication::sharedApplication(mtm).isActive();
+    let is_panel = ns.isKindOfClass(NSPanel::class());
     tracing::info!(
         target: "tokenwatch::popover",
         stage,
         is_visible = ns.isVisible(),
         is_key = ns.isKeyWindow(),
         on_active_space = ns.isOnActiveSpace(),
+        is_panel,
         style_mask = ns.styleMask().0,
         level = ns.level(),
         hides_on_deactivate = ns.hidesOnDeactivate(),
