@@ -4,6 +4,8 @@
 //! Schema migrations are keyed by `schema_version` stored in the `meta` table;
 //! new versions apply their DDL and bump the version number.
 
+use std::collections::HashMap;
+
 use rusqlite::{params, Connection, Result as SqlResult};
 
 use crate::config::app_identity::DB_FILENAME;
@@ -97,6 +99,12 @@ fn migrate(conn: &Connection) -> SqlResult<()> {
         set_meta(conn, "schema_version", "7")?;
     }
 
+    if version < 8 {
+        // backfill_project_names opens its own transaction, so do NOT wrap here.
+        apply_v8(conn)?;
+        set_meta(conn, "schema_version", "8")?;
+    }
+
     Ok(())
 }
 
@@ -139,13 +147,15 @@ fn apply_v1(conn: &Connection) -> SqlResult<()> {
 /// Reads every row's `project_path` (the raw cwd already stored) and recomputes
 /// `project_name` via `crate::ingest::derive_project_name`.
 fn apply_v2(conn: &Connection) -> SqlResult<()> {
-    backfill_project_names(conn)
+    // v8 re-runs the backfill with the real Paseo index.
+    backfill_project_names(conn, &crate::ingest::PaseoIndex::empty())
 }
 
 /// Migration v3 — re-run the `project_name` backfill to pick up an updated
 /// worktree rule.
 fn apply_v3(conn: &Connection) -> SqlResult<()> {
-    backfill_project_names(conn)
+    // v8 re-runs the backfill with the real Paseo index.
+    backfill_project_names(conn, &crate::ingest::PaseoIndex::empty())
 }
 
 /// Migration v4 — re-run the backfill again after correcting the derivation
@@ -154,7 +164,8 @@ fn apply_v3(conn: &Connection) -> SqlResult<()> {
 /// collapse to `"unknown"`. This repairs DBs where v3 had over-grouped
 /// Conductor projects into `"unknown"`.
 fn apply_v4(conn: &Connection) -> SqlResult<()> {
-    backfill_project_names(conn)
+    // v8 re-runs the backfill with the real Paseo index.
+    backfill_project_names(conn, &crate::ingest::PaseoIndex::empty())
 }
 
 /// Migration v5 — create `project_groups` and `project_group_members` tables
@@ -199,30 +210,54 @@ fn apply_v7(conn: &Connection) -> SqlResult<()> {
     recompute_costs(conn)
 }
 
+/// Migration v8 — re-attribute rows from Paseo worktrees (previously all
+/// `unknown`) to their main repo, using `~/.paseo/projects/workspaces.json`,
+/// then the worktree's `.git` file, then the worktree slug.
+///
+/// **Explicit exception to the D19 contract**: `project_group_members` is NOT
+/// remapped, because the source name is `unknown` (a 1:N mapping that cannot
+/// be represented) and `unknown` still exists for `.claude/worktrees` rows.
+fn apply_v8(conn: &Connection) -> SqlResult<()> {
+    let paseo = crate::ingest::PaseoIndex::load_default();
+    backfill_project_names(conn, &paseo)
+}
+
 /// Recompute `project_name` for every row from its stored `project_path`,
 /// updating in place within a single transaction (atomic). Idempotent: running
-/// on already-correct data is a no-op.
+/// on already-correct data is a no-op. Only rows whose name changes are written.
 ///
 /// **D19 contract**: any future re-derivation that changes the `project_name`
 /// rule MUST also remap `project_group_members.project_name` with the same
 /// old→new mapping, or group memberships will silently fall through to "otros".
-fn backfill_project_names(conn: &Connection) -> SqlResult<()> {
-    // Collect all (dedup_key, project_path) pairs first, then update in a
-    // single transaction so the backfill is atomic.
-    let mut stmt = conn.prepare("SELECT dedup_key, project_path FROM usage_events")?;
-    let rows: Vec<(String, String)> = stmt
+/// (v8 is a documented exception; see `apply_v8`.)
+fn backfill_project_names(conn: &Connection, paseo: &crate::ingest::PaseoIndex) -> SqlResult<()> {
+    let mut stmt =
+        conn.prepare("SELECT dedup_key, project_path, project_name FROM usage_events")?;
+    let rows: Vec<(String, String, String)> = stmt
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })?
         .collect::<SqlResult<_>>()?;
+    drop(stmt);
 
+    let mut cache: HashMap<String, String> = HashMap::new();
     let tx = conn.unchecked_transaction()?;
-    for (dedup_key, project_path) in rows {
-        let new_name = crate::ingest::derive_project_name(Some(&project_path));
-        tx.execute(
-            "UPDATE usage_events SET project_name = ?1 WHERE dedup_key = ?2",
-            params![new_name, dedup_key],
-        )?;
+    {
+        let mut upd =
+            tx.prepare_cached("UPDATE usage_events SET project_name = ?1 WHERE dedup_key = ?2")?;
+        for (dedup_key, project_path, current_name) in rows {
+            let new_name = cache
+                .entry(project_path.clone())
+                .or_insert_with(|| crate::ingest::derive_project_name(Some(&project_path), paseo))
+                .clone();
+            if new_name != current_name {
+                upd.execute(params![new_name, dedup_key])?;
+            }
+        }
     }
     tx.commit()?;
 
@@ -441,7 +476,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, "7");
+        assert_eq!(version, "8");
     }
 
     #[test]
@@ -1010,5 +1045,138 @@ mod tests {
             cost_after_first, cost_after_second,
             "second run of apply_v7 must not change cost"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // v8 — Paseo re-attribution
+    // -----------------------------------------------------------------------
+
+    const V8_PASEO_JSON: &str = r#"[
+      {"worktreeRoot":"/Users/x/.paseo/worktrees/3qkyl933/resolute-seal","cwd":"/Users/x/.paseo/worktrees/3qkyl933/resolute-seal","mainRepoRoot":"/Users/x/dev/freelance/tokenwatch"},
+      {"worktreeRoot":"/Users/x/.paseo/worktrees/abcd1234/upbeat-bear","cwd":"/Users/x/.paseo/worktrees/abcd1234/upbeat-bear","mainRepoRoot":"/Users/x/dev/meki/backend"}
+    ]"#;
+
+    fn v8_seed(conn: &Connection, key: &str, path: &str, name: &str) {
+        let row = UsageEventRow {
+            dedup_key: key,
+            session_id: "s",
+            project_path: path,
+            project_name: name,
+            model: "claude-sonnet-4-6",
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            total_tokens: 2,
+            cost: 0.0,
+            timestamp: "2026-10-20T00:00:00Z",
+            git_branch: None,
+            ingested_at: "2026-10-20T00:00:01Z",
+        };
+        insert_event(conn, &row).unwrap();
+    }
+
+    fn v8_snapshot(conn: &Connection) -> Vec<(String, String, String)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT dedup_key, project_path, project_name FROM usage_events ORDER BY dedup_key",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<SqlResult<Vec<_>>>()
+            .unwrap();
+        rows
+    }
+
+    fn v8_seed_all(conn: &Connection) {
+        v8_seed(
+            conn,
+            "a",
+            "/Users/x/.paseo/worktrees/3qkyl933/resolute-seal",
+            "unknown",
+        );
+        v8_seed(
+            conn,
+            "b",
+            "/Users/x/.paseo/worktrees/abcd1234/upbeat-bear/dev-wiki",
+            "unknown",
+        );
+        v8_seed(
+            conn,
+            "c",
+            "/Users/x/dev/inv/tub2/.claude/worktrees/agent-x",
+            "unknown",
+        );
+        v8_seed(
+            conn,
+            "d",
+            "/Users/x/conductor/workspaces/tub2/chengdu-v4",
+            "tub2",
+        );
+    }
+
+    #[test]
+    fn test_v8_backfill_reattributes_paseo_unknown_rows() {
+        let conn = test_conn();
+        v8_seed_all(&conn);
+        let idx = crate::ingest::PaseoIndex::from_json_str(V8_PASEO_JSON);
+        backfill_project_names(&conn, &idx).unwrap();
+        let rows = v8_snapshot(&conn);
+        let names: Vec<&str> = rows.iter().map(|r| r.2.as_str()).collect();
+        assert_eq!(
+            names,
+            ["freelance/tokenwatch", "meki/backend", "unknown", "tub2"]
+        );
+        assert_eq!(
+            rows[0].1,
+            "/Users/x/.paseo/worktrees/3qkyl933/resolute-seal"
+        );
+        assert_eq!(
+            rows[1].1,
+            "/Users/x/.paseo/worktrees/abcd1234/upbeat-bear/dev-wiki"
+        );
+        assert_eq!(rows[2].1, "/Users/x/dev/inv/tub2/.claude/worktrees/agent-x");
+        assert_eq!(rows[3].1, "/Users/x/conductor/workspaces/tub2/chengdu-v4");
+    }
+
+    #[test]
+    fn test_v8_backfill_idempotent() {
+        let conn = test_conn();
+        v8_seed_all(&conn);
+        let idx = crate::ingest::PaseoIndex::from_json_str(V8_PASEO_JSON);
+        backfill_project_names(&conn, &idx).unwrap();
+        let before = v8_snapshot(&conn);
+        let total_before = conn.total_changes();
+        backfill_project_names(&conn, &idx).unwrap();
+        assert_eq!(conn.total_changes(), total_before);
+        assert_eq!(before, v8_snapshot(&conn));
+    }
+
+    #[test]
+    fn test_v8_backfill_does_not_touch_group_members() {
+        let conn = test_conn();
+        v8_seed_all(&conn);
+        conn.execute(
+            "INSERT INTO project_groups (name, created_at) VALUES ('g', '2026-10-20T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO project_group_members (project_name, group_id) VALUES ('unknown', 1)",
+            [],
+        )
+        .unwrap();
+        let idx = crate::ingest::PaseoIndex::from_json_str(V8_PASEO_JSON);
+        backfill_project_names(&conn, &idx).unwrap();
+        let members: Vec<(String, i64)> = conn
+            .prepare("SELECT project_name, group_id FROM project_group_members")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<SqlResult<_>>()
+            .unwrap();
+        assert_eq!(members, vec![("unknown".to_owned(), 1)]);
     }
 }

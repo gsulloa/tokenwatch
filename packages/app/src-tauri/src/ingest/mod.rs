@@ -8,6 +8,8 @@
 //! (appended since last run) are re-parsed on subsequent polls.
 
 use std::{
+    cell::RefCell,
+    collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
     path::Path,
@@ -62,32 +64,9 @@ struct RawRecord {
 // Project name derivation
 // ---------------------------------------------------------------------------
 
-/// Derive a human-readable project name from a `cwd` path.
-///
-/// Rules (in order):
-/// 1. `cwd` is `None` or empty → `"unknown"`.
-/// 2. If the path contains any `worktrees` component (e.g. an ephemeral
-///    `.../.claude/worktrees/agent-XXXX`), it can't be attributed to a project
-///    → `"unknown"`, so all such worktrees are grouped together.
-/// 3. If the path contains the consecutive pair `conductor` → `workspaces`,
-///    return the component right after `workspaces` (the `<repo>`), collapsing
-///    workspace city, subpaths, and submodules into the repo name.
-/// 4. Otherwise → last 1–2 significant segments.
-///
-/// Examples:
-/// - `/Users/x/conductor/workspaces/tub2/chengdu-v4` → `tub2`
-/// - `/Users/x/conductor/workspaces/argus/cairo/packages/app` → `argus`
-/// - `/Users/x/dev/inventures/tub2/.claude/worktrees/agent-abcd` → `unknown`
-/// - `/Users/x/dev/inventures/tub2` → `inventures/tub2`
-pub fn derive_project_name(cwd: Option<&str>) -> String {
-    let cwd = match cwd {
-        Some(c) if !c.is_empty() => c,
-        _ => return "unknown".to_owned(),
-    };
-
-    let path = Path::new(cwd);
-    // Filter out the root component ("/") so paths like "/project" yield "project".
-    let components: Vec<&str> = path
+/// Split a path into its significant components (drops root / prefix).
+fn path_components(path: &str) -> Vec<&str> {
+    Path::new(path)
         .components()
         .filter(|c| {
             !matches!(
@@ -96,16 +75,26 @@ pub fn derive_project_name(cwd: Option<&str>) -> String {
             )
         })
         .filter_map(|c| c.as_os_str().to_str())
-        .collect();
+        .collect()
+}
 
+/// Non-Paseo derivation rules applied to already-split components.
+fn derive_from_components(components: &[&str]) -> String {
     if components.is_empty() {
         return "unknown".to_owned();
     }
 
-    // Ephemeral agent worktrees (any "worktrees" component, e.g.
-    // .../.claude/worktrees/agent-XXXX) → group them all under "unknown".
-    if components.contains(&"worktrees") {
-        return "unknown".to_owned();
+    // Ephemeral agent worktrees (".claude/worktrees/..." or
+    // "worktrees/agent-*") → group them all under "unknown".
+    for i in 0..components.len() {
+        let claude_pair = components[i] == ".claude" && components.get(i + 1) == Some(&"worktrees");
+        let agent_pair = components[i] == "worktrees"
+            && components
+                .get(i + 1)
+                .is_some_and(|c| c.starts_with("agent-"));
+        if claude_pair || agent_pair {
+            return "unknown".to_owned();
+        }
     }
 
     // Conductor layout: "conductor" → "workspaces" → <repo>. Return the repo.
@@ -123,6 +112,193 @@ pub fn derive_project_name(cwd: Option<&str>) -> String {
         1 => components[0].to_owned(),
         n => format!("{}/{}", components[n - 2], components[n - 1]),
     }
+}
+
+/// Derive a project name from a path using the non-Paseo rules.
+fn derive_non_paseo_name(path: &str) -> String {
+    derive_from_components(&path_components(path))
+}
+
+// ---------------------------------------------------------------------------
+// Paseo worktree resolution
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize, Default)]
+struct RawPaseoWorkspace {
+    #[serde(default, rename = "worktreeRoot")]
+    worktree_root: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default, rename = "mainRepoRoot")]
+    main_repo_root: Option<String>,
+}
+
+/// Index of Paseo worktrees → main repo, built from Paseo's internal
+/// (undocumented) `~/.paseo/projects/workspaces.json`.
+///
+/// Not `Sync` (uses `RefCell` for a `.git` fallback cache); only meant for
+/// sequential use within a single ingest/backfill run.
+#[derive(Debug, Default)]
+pub struct PaseoIndex {
+    roots: HashMap<String, String>,
+    git_cache: RefCell<HashMap<String, Option<String>>>,
+}
+
+fn normalize(p: &str) -> String {
+    let t = p.trim();
+    let stripped = t.trim_end_matches('/');
+    if stripped.is_empty() && t.starts_with('/') {
+        "/".to_owned()
+    } else {
+        stripped.to_owned()
+    }
+}
+
+fn read_gitdir_main_repo(worktree_root: &Path) -> Option<String> {
+    let git = worktree_root.join(".git");
+    if !git.is_file() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(git).ok()?;
+    let rest = contents.trim().strip_prefix("gitdir:")?.trim();
+    let idx = rest.find("/.git/")?;
+    if idx > 0 {
+        Some(rest[..idx].to_owned())
+    } else {
+        None
+    }
+}
+
+impl PaseoIndex {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn from_json_str(json: &str) -> Self {
+        let entries = match serde_json::from_str::<Vec<RawPaseoWorkspace>>(json) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "invalid Paseo workspaces.json; ignoring");
+                return Self::empty();
+            }
+        };
+        let mut roots = HashMap::new();
+        for e in entries {
+            let main = match e.main_repo_root.as_deref().map(str::trim) {
+                Some(m) if !m.is_empty() => normalize(m),
+                _ => continue,
+            };
+            for key in [e.worktree_root.as_deref(), e.cwd.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if !key.trim().is_empty() {
+                    roots.insert(normalize(key), main.clone());
+                }
+            }
+        }
+        Self {
+            roots,
+            git_cache: RefCell::new(HashMap::new()),
+        }
+    }
+
+    pub fn load_from_home(home: &Path) -> Self {
+        let path = home.join(".paseo").join("projects").join("workspaces.json");
+        if !path.exists() {
+            tracing::debug!(path = %path.display(), "Paseo workspaces.json not found");
+            return Self::empty();
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => Self::from_json_str(&contents),
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot read Paseo workspaces.json; ignoring");
+                Self::empty()
+            }
+        }
+    }
+
+    pub fn load_default() -> Self {
+        match home_dir() {
+            Some(h) => Self::load_from_home(&h),
+            None => Self::empty(),
+        }
+    }
+
+    fn resolve_main_repo(&self, worktree_root: &str, cwd: &str) -> Option<String> {
+        let mut probe = cwd.to_owned();
+        loop {
+            if let Some(v) = self.roots.get(&probe) {
+                return Some(v.clone());
+            }
+            if probe.len() <= worktree_root.len() {
+                break;
+            }
+            match probe.rfind('/') {
+                Some(idx) => probe.truncate(idx),
+                None => break,
+            }
+        }
+        if let Some(cached) = self.git_cache.borrow().get(worktree_root) {
+            return cached.clone();
+        }
+        let r = read_gitdir_main_repo(Path::new(worktree_root));
+        self.git_cache
+            .borrow_mut()
+            .insert(worktree_root.to_owned(), r.clone());
+        r
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Project name derivation
+// ---------------------------------------------------------------------------
+
+/// Derive a human-readable project name from a `cwd` path.
+///
+/// Rules (in order):
+/// 1. `cwd` is `None` or empty → `"unknown"`.
+/// 2. Paseo worktree (`.paseo/worktrees/<id>/<slug>[/...]`): resolved to the
+///    main repo via the [`PaseoIndex`], then the worktree's `.git` file, then
+///    the `<slug>`. Without a slug → `"unknown"`.
+/// 3. Ephemeral agent worktree (`.claude/worktrees/...` or
+///    `worktrees/agent-*`) → `"unknown"`.
+/// 4. If the path contains the consecutive pair `conductor` → `workspaces`,
+///    return the component right after `workspaces` (the `<repo>`).
+/// 5. Otherwise → last 1–2 significant segments.
+///
+/// Examples:
+/// - `/Users/x/.paseo/worktrees/3qkyl933/resolute-seal` → `freelance/tokenwatch` (with index)
+/// - `/Users/x/conductor/workspaces/tub2/chengdu-v4` → `tub2`
+/// - `/Users/x/dev/inventures/tub2/.claude/worktrees/agent-abcd` → `unknown`
+/// - `/Users/x/dev/inventures/tub2` → `inventures/tub2`
+pub fn derive_project_name(cwd: Option<&str>, paseo: &PaseoIndex) -> String {
+    let cwd = match cwd {
+        Some(c) if !c.is_empty() => c,
+        _ => return "unknown".to_owned(),
+    };
+
+    let components = path_components(cwd);
+    if components.is_empty() {
+        return "unknown".to_owned();
+    }
+
+    for i in 0..components.len().saturating_sub(1) {
+        if components[i] == ".paseo" && components[i + 1] == "worktrees" {
+            let slug = match components.get(i + 3) {
+                Some(s) => *s,
+                None => return "unknown".to_owned(),
+            };
+            let worktree_root = format!("/{}", components[..=i + 3].join("/"));
+            let cwd_norm = format!("/{}", components.join("/"));
+            return match paseo.resolve_main_repo(&worktree_root, &cwd_norm) {
+                Some(main) => derive_non_paseo_name(&main),
+                None => slug.to_owned(),
+            };
+        }
+    }
+
+    derive_from_components(&components)
 }
 
 // ---------------------------------------------------------------------------
@@ -144,11 +320,14 @@ pub struct IngestSummary {
 ///
 /// Returns `~/.claude/projects`. Uses `HOME` env var (or `dirs` home_dir).
 pub fn claude_projects_dir() -> Option<std::path::PathBuf> {
-    let home = std::env::var("HOME")
+    Some(home_dir()?.join(".claude").join("projects"))
+}
+
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var("HOME")
         .ok()
         .map(std::path::PathBuf::from)
-        .or_else(|| directories::UserDirs::new().map(|d| d.home_dir().to_path_buf()))?;
-    Some(home.join(".claude").join("projects"))
+        .or_else(|| directories::UserDirs::new().map(|d| d.home_dir().to_path_buf()))
 }
 
 /// Run a full incremental ingest from the default `~/.claude/projects` directory.
@@ -160,14 +339,19 @@ pub fn ingest(conn: &Connection) -> anyhow::Result<IngestSummary> {
             return Ok(IngestSummary::default());
         }
     };
-    ingest_from(conn, &base)
+    let paseo = PaseoIndex::load_default();
+    ingest_from(conn, &base, &paseo)
 }
 
 /// Run a full incremental ingest from an arbitrary base directory.
 ///
 /// Designed so tests can point at a fixture directory without touching the
 /// real `~/.claude/projects`.
-pub fn ingest_from(conn: &Connection, base_dir: &Path) -> anyhow::Result<IngestSummary> {
+pub fn ingest_from(
+    conn: &Connection,
+    base_dir: &Path,
+    paseo: &PaseoIndex,
+) -> anyhow::Result<IngestSummary> {
     let pattern = base_dir.join("**").join("*.jsonl");
     let pattern_str = pattern.to_string_lossy();
 
@@ -180,7 +364,7 @@ pub fn ingest_from(conn: &Connection, base_dir: &Path) -> anyhow::Result<IngestS
 
     for path in paths {
         let path_display = path.display().to_string();
-        match ingest_file(conn, &path) {
+        match ingest_file(conn, &path, paseo) {
             Ok((skipped, inserted)) => {
                 if skipped {
                     summary.files_skipped += 1;
@@ -202,7 +386,7 @@ pub fn ingest_from(conn: &Connection, base_dir: &Path) -> anyhow::Result<IngestS
 ///
 /// Returns `(skipped, inserted)` where `skipped=true` means the file was
 /// unchanged and not read.
-fn ingest_file(conn: &Connection, path: &Path) -> anyhow::Result<(bool, u64)> {
+fn ingest_file(conn: &Connection, path: &Path, paseo: &PaseoIndex) -> anyhow::Result<(bool, u64)> {
     let path_str = path.to_string_lossy().to_string();
 
     let metadata = std::fs::metadata(path)?;
@@ -308,7 +492,7 @@ fn ingest_file(conn: &Connection, path: &Path) -> anyhow::Result<(bool, u64)> {
         }
 
         let project_path = record.cwd.clone().unwrap_or_default();
-        let project_name = derive_project_name(record.cwd.as_deref());
+        let project_name = derive_project_name(record.cwd.as_deref(), paseo);
 
         let usage = pricing::Usage {
             input_tokens: raw_usage.input_tokens,
@@ -396,7 +580,10 @@ mod tests {
     fn test_derive_conductor_workspace_root() {
         // /Users/x/conductor/workspaces/tub2/chengdu-v4 → tub2
         assert_eq!(
-            derive_project_name(Some("/Users/x/conductor/workspaces/tub2/chengdu-v4")),
+            derive_project_name(
+                Some("/Users/x/conductor/workspaces/tub2/chengdu-v4"),
+                &PaseoIndex::empty()
+            ),
             "tub2"
         );
     }
@@ -405,9 +592,10 @@ mod tests {
     fn test_derive_conductor_city_with_version_suffix() {
         // /Users/x/conductor/workspaces/argus/belo-horizonte-v1 → argus
         assert_eq!(
-            derive_project_name(Some(
-                "/Users/x/conductor/workspaces/argus/belo-horizonte-v1"
-            )),
+            derive_project_name(
+                Some("/Users/x/conductor/workspaces/argus/belo-horizonte-v1"),
+                &PaseoIndex::empty()
+            ),
             "argus"
         );
     }
@@ -416,9 +604,10 @@ mod tests {
     fn test_derive_conductor_submodule_deep_path() {
         // .../tub2/dili/FRONT/e2e/operator-assignment → tub2
         assert_eq!(
-            derive_project_name(Some(
-                "/Users/x/conductor/workspaces/tub2/dili/FRONT/e2e/operator-assignment"
-            )),
+            derive_project_name(
+                Some("/Users/x/conductor/workspaces/tub2/dili/FRONT/e2e/operator-assignment"),
+                &PaseoIndex::empty()
+            ),
             "tub2"
         );
     }
@@ -427,9 +616,10 @@ mod tests {
     fn test_derive_conductor_monorepo_subpath() {
         // .../argus/cairo/packages/app/src-tauri → argus
         assert_eq!(
-            derive_project_name(Some(
-                "/Users/x/conductor/workspaces/argus/cairo/packages/app/src-tauri"
-            )),
+            derive_project_name(
+                Some("/Users/x/conductor/workspaces/argus/cairo/packages/app/src-tauri"),
+                &PaseoIndex::empty()
+            ),
             "argus"
         );
     }
@@ -438,22 +628,228 @@ mod tests {
     fn test_derive_worktrees_component() {
         // Any path with a "worktrees" component → grouped under "unknown"
         assert_eq!(
-            derive_project_name(Some(
-                "/Users/x/dev/inventures/tub2/.claude/worktrees/agent-abcd"
-            )),
+            derive_project_name(
+                Some("/Users/x/dev/inventures/tub2/.claude/worktrees/agent-abcd"),
+                &PaseoIndex::empty()
+            ),
             "unknown"
         );
         assert_eq!(
-            derive_project_name(Some("/Users/x/worktrees/agent-1234/packages/app")),
+            derive_project_name(
+                Some("/Users/x/worktrees/agent-1234/packages/app"),
+                &PaseoIndex::empty()
+            ),
             "unknown"
         );
+    }
+
+    const PASEO_JSON: &str = r#"[
+      {"workspaceId":"wks_1","kind":"worktree","cwd":"/Users/x/.paseo/worktrees/3qkyl933/resolute-seal","worktreeRoot":"/Users/x/.paseo/worktrees/3qkyl933/resolute-seal","mainRepoRoot":"/Users/x/dev/freelance/tokenwatch","archivedAt":null},
+      {"workspaceId":"wks_2","kind":"worktree","cwd":"/Users/x/.paseo/worktrees/abcd1234/upbeat-bear","worktreeRoot":"/Users/x/.paseo/worktrees/abcd1234/upbeat-bear","mainRepoRoot":"/Users/x/dev/meki/backend","archivedAt":"2026-10-01T00:00:00Z","foo":1},
+      {"workspaceId":"wks_3","kind":"local_checkout","cwd":"/Users/x/dev/meki/console","worktreeRoot":"/Users/x/dev/meki/console","mainRepoRoot":null}
+    ]"#;
+
+    fn paseo_idx() -> PaseoIndex {
+        PaseoIndex::from_json_str(PASEO_JSON)
+    }
+
+    #[test]
+    fn test_derive_paseo_worktree_root_uses_main_repo() {
+        assert_eq!(
+            derive_project_name(
+                Some("/Users/x/.paseo/worktrees/3qkyl933/resolute-seal"),
+                &paseo_idx()
+            ),
+            "freelance/tokenwatch"
+        );
+    }
+
+    #[test]
+    fn test_derive_paseo_subdir_uses_main_repo() {
+        let idx = paseo_idx();
+        assert_eq!(
+            derive_project_name(
+                Some("/Users/x/.paseo/worktrees/abcd1234/upbeat-bear/dev-wiki"),
+                &idx
+            ),
+            "meki/backend"
+        );
+        assert_eq!(
+            derive_project_name(
+                Some("/Users/x/.paseo/worktrees/abcd1234/upbeat-bear/a/b/c"),
+                &idx
+            ),
+            "meki/backend"
+        );
+    }
+
+    #[test]
+    fn test_derive_paseo_trailing_slash_in_index() {
+        let idx = PaseoIndex::from_json_str(
+            r#"[{"worktreeRoot":"/h/.paseo/worktrees/zz/slug/","mainRepoRoot":"/h/dev/a/b/"}]"#,
+        );
+        assert_eq!(
+            derive_project_name(Some("/h/.paseo/worktrees/zz/slug"), &idx),
+            "a/b"
+        );
+    }
+
+    fn make_git_worktree(tmp: &TempDir, git_contents: Option<&str>) -> std::path::PathBuf {
+        let root = tmp.path().join(".paseo/worktrees/id1/brave-otter");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        if let Some(c) = git_contents {
+            std::fs::write(root.join(".git"), c).unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn test_derive_paseo_git_file_fallback() {
+        let tmp = TempDir::new().unwrap();
+        let root = make_git_worktree(
+            &tmp,
+            Some("gitdir: /Users/x/dev/meki/backend/.git/worktrees/brave-otter\n"),
+        );
+        let idx = PaseoIndex::empty();
+        assert_eq!(
+            derive_project_name(Some(root.to_str().unwrap()), &idx),
+            "meki/backend"
+        );
+        assert_eq!(
+            derive_project_name(Some(root.join("src").to_str().unwrap()), &idx),
+            "meki/backend"
+        );
+    }
+
+    #[test]
+    fn test_derive_paseo_slug_last_resort() {
+        let idx = PaseoIndex::empty();
+        assert_eq!(
+            derive_project_name(
+                Some("/nonexistent-tw-test/.paseo/worktrees/zz99/brave-otter"),
+                &idx
+            ),
+            "brave-otter"
+        );
+        assert_eq!(
+            derive_project_name(
+                Some("/nonexistent-tw-test/.paseo/worktrees/zz99/brave-otter/sub/dir"),
+                &idx
+            ),
+            "brave-otter"
+        );
+    }
+
+    #[test]
+    fn test_derive_paseo_incomplete_path_is_unknown() {
+        let idx = PaseoIndex::empty();
+        assert_eq!(
+            derive_project_name(Some("/Users/x/.paseo/worktrees"), &idx),
+            "unknown"
+        );
+        assert_eq!(
+            derive_project_name(Some("/Users/x/.paseo/worktrees/zz99"), &idx),
+            "unknown"
+        );
+    }
+
+    #[test]
+    fn test_derive_paseo_git_file_without_marker_falls_back_to_slug() {
+        let tmp = TempDir::new().unwrap();
+        let root = make_git_worktree(&tmp, Some("gitdir: /weird/path"));
+        assert_eq!(
+            derive_project_name(Some(root.to_str().unwrap()), &PaseoIndex::empty()),
+            "brave-otter"
+        );
+
+        let tmp2 = TempDir::new().unwrap();
+        let root2 = make_git_worktree(&tmp2, None);
+        std::fs::create_dir(root2.join(".git")).unwrap();
+        assert_eq!(
+            derive_project_name(Some(root2.to_str().unwrap()), &PaseoIndex::empty()),
+            "brave-otter"
+        );
+    }
+
+    #[test]
+    fn test_derive_claude_agent_worktrees_still_unknown() {
+        let idx = paseo_idx();
+        for p in [
+            "/Users/x/dev/inventures/tub2/.claude/worktrees/agent-abcd",
+            "/Users/x/conductor/workspaces/tub2/kelowna-v1/FRONT/.claude/worktrees/agent-ad31",
+            "/Users/x/worktrees/agent-1234/packages/app",
+        ] {
+            assert_eq!(derive_project_name(Some(p), &idx), "unknown", "{p}");
+        }
+    }
+
+    #[test]
+    fn test_derive_generic_worktrees_component_uses_fallback() {
+        assert_eq!(
+            derive_project_name(
+                Some("/Users/x/dev/worktrees/feature-x"),
+                &PaseoIndex::empty()
+            ),
+            "worktrees/feature-x"
+        );
+    }
+
+    #[test]
+    fn test_paseo_index_malformed_json_is_empty() {
+        for json in ["{not json", "{\"a\":1}", "[{\"mainRepoRoot\": 5}]"] {
+            let idx = PaseoIndex::from_json_str(json);
+            assert_eq!(
+                derive_project_name(Some("/nonexistent-tw-test/.paseo/worktrees/i/slug-a"), &idx),
+                "slug-a",
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_paseo_index_load_from_home() {
+        let cwd = "/Users/x/.paseo/worktrees/3qkyl933/resolute-seal";
+
+        let tmp = TempDir::new().unwrap();
+        let idx = PaseoIndex::load_from_home(tmp.path());
+        assert_eq!(derive_project_name(Some(cwd), &idx), "resolute-seal");
+
+        let dir = tmp.path().join(".paseo/projects");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("workspaces.json"), PASEO_JSON).unwrap();
+        let idx = PaseoIndex::load_from_home(tmp.path());
+        assert_eq!(derive_project_name(Some(cwd), &idx), "freelance/tokenwatch");
+
+        std::fs::write(dir.join("workspaces.json"), "\u{0}garbage").unwrap();
+        let idx = PaseoIndex::load_from_home(tmp.path());
+        assert_eq!(derive_project_name(Some(cwd), &idx), "resolute-seal");
+    }
+
+    #[test]
+    fn test_ingest_paseo_cwd_attributed_to_main_repo() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = "/Users/x/.paseo/worktrees/3qkyl933/resolute-seal";
+        let line = FIXTURE_LINE_1.replace("/Users/x/conductor/workspaces/backend/madrid", cwd);
+        make_fixture_dir(&tmp, "proj/sess.jsonl", &line);
+        let conn = test_conn();
+        let summary = ingest_from(&conn, tmp.path(), &paseo_idx()).unwrap();
+        assert_eq!(summary.events_inserted, 1);
+        let (name, path): (String, String) = conn
+            .query_row(
+                "SELECT project_name, project_path FROM usage_events",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "freelance/tokenwatch");
+        assert_eq!(path, cwd);
     }
 
     #[test]
     fn test_derive_non_conductor_path_keeps_fallback() {
         // /Users/x/dev/inventures/tub2 → inventures/tub2
         assert_eq!(
-            derive_project_name(Some("/Users/x/dev/inventures/tub2")),
+            derive_project_name(Some("/Users/x/dev/inventures/tub2"), &PaseoIndex::empty()),
             "inventures/tub2"
         );
     }
@@ -462,7 +858,10 @@ mod tests {
     #[test]
     fn test_derive_project_name_two_segments() {
         assert_eq!(
-            derive_project_name(Some("/Users/x/conductor/workspaces/backend/madrid")),
+            derive_project_name(
+                Some("/Users/x/conductor/workspaces/backend/madrid"),
+                &PaseoIndex::empty()
+            ),
             "backend"
         );
     }
@@ -470,17 +869,23 @@ mod tests {
     #[test]
     fn test_derive_project_name_one_segment() {
         // "/project" has only one meaningful segment after stripping the root → "project"
-        assert_eq!(derive_project_name(Some("/project")), "project");
+        assert_eq!(
+            derive_project_name(Some("/project"), &PaseoIndex::empty()),
+            "project"
+        );
     }
 
     #[test]
     fn test_derive_project_name_none() {
-        assert_eq!(derive_project_name(None), "unknown");
+        assert_eq!(derive_project_name(None, &PaseoIndex::empty()), "unknown");
     }
 
     #[test]
     fn test_derive_project_name_empty() {
-        assert_eq!(derive_project_name(Some("")), "unknown");
+        assert_eq!(
+            derive_project_name(Some(""), &PaseoIndex::empty()),
+            "unknown"
+        );
     }
 
     #[test]
@@ -492,7 +897,7 @@ mod tests {
         make_fixture_dir(&tmp, "proj/session.jsonl", &content);
 
         let conn = test_conn();
-        let summary = ingest_from(&conn, tmp.path()).unwrap();
+        let summary = ingest_from(&conn, tmp.path(), &PaseoIndex::empty()).unwrap();
 
         // Only FIXTURE_LINE_1 is a valid assistant line with usage
         assert_eq!(summary.events_inserted, 1, "expected 1 event from fixture");
@@ -520,7 +925,7 @@ mod tests {
         make_fixture_dir(&tmp, "proj/session.jsonl", &content);
 
         let conn = test_conn();
-        let summary = ingest_from(&conn, tmp.path()).unwrap();
+        let summary = ingest_from(&conn, tmp.path(), &PaseoIndex::empty()).unwrap();
 
         // Only FIXTURE_LINE_1 is real; the <synthetic> record is skipped.
         assert_eq!(summary.events_inserted, 1);
@@ -542,7 +947,7 @@ mod tests {
         make_fixture_dir(&tmp, "proj/session.jsonl", &content);
 
         let conn = test_conn();
-        ingest_from(&conn, tmp.path()).unwrap();
+        ingest_from(&conn, tmp.path(), &PaseoIndex::empty()).unwrap();
 
         let count: u64 = conn
             .query_row("SELECT COUNT(*) FROM usage_events", [], |r| r.get(0))
@@ -556,7 +961,7 @@ mod tests {
         make_fixture_dir(&tmp, "proj/session.jsonl", &format!("{FIXTURE_NO_CWD}\n"));
 
         let conn = test_conn();
-        ingest_from(&conn, tmp.path()).unwrap();
+        ingest_from(&conn, tmp.path(), &PaseoIndex::empty()).unwrap();
 
         let project_name: String = conn
             .query_row(
@@ -581,7 +986,7 @@ mod tests {
         }
 
         let conn = test_conn();
-        let s1 = ingest_from(&conn, tmp.path()).unwrap();
+        let s1 = ingest_from(&conn, tmp.path(), &PaseoIndex::empty()).unwrap();
         assert_eq!(s1.events_inserted, 1);
 
         // Touch file time to force re-check even if size didn't change much.
@@ -594,7 +999,7 @@ mod tests {
             writeln!(f, "{FIXTURE_LINE_2}").unwrap();
         }
 
-        let s2 = ingest_from(&conn, tmp.path()).unwrap();
+        let s2 = ingest_from(&conn, tmp.path(), &PaseoIndex::empty()).unwrap();
         assert_eq!(
             s2.events_inserted, 1,
             "only the new line should be inserted"
@@ -612,12 +1017,12 @@ mod tests {
         make_fixture_dir(&tmp, "proj/session.jsonl", &format!("{FIXTURE_LINE_1}\n"));
 
         let conn = test_conn();
-        let s1 = ingest_from(&conn, tmp.path()).unwrap();
+        let s1 = ingest_from(&conn, tmp.path(), &PaseoIndex::empty()).unwrap();
         assert_eq!(s1.files_skipped, 0);
         assert_eq!(s1.files_processed, 1);
 
         // Second run — file unchanged.
-        let s2 = ingest_from(&conn, tmp.path()).unwrap();
+        let s2 = ingest_from(&conn, tmp.path(), &PaseoIndex::empty()).unwrap();
         assert_eq!(s2.files_skipped, 1, "unchanged file must be skipped");
         assert_eq!(s2.files_processed, 0);
     }
@@ -630,7 +1035,7 @@ mod tests {
             .join("fixtures");
 
         let conn = test_conn();
-        let summary = ingest_from(&conn, &fixture_dir).unwrap();
+        let summary = ingest_from(&conn, &fixture_dir, &PaseoIndex::empty()).unwrap();
 
         // The fixture has 5 valid assistant lines (lines 1,3,4,5,6) — line 6 has unknown model
         // but still inserts (cost=0). Malformed JSON line and user line are skipped.
