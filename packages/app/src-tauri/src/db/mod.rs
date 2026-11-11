@@ -4,9 +4,9 @@
 //! Schema migrations are keyed by `schema_version` stored in the `meta` table;
 //! new versions apply their DDL and bump the version number.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use rusqlite::{params, Connection, Result as SqlResult};
+use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 
 use crate::config::app_identity::DB_FILENAME;
 
@@ -100,7 +100,7 @@ fn migrate(conn: &Connection) -> SqlResult<()> {
     }
 
     if version < 8 {
-        // backfill_project_names opens its own transaction, so do NOT wrap here.
+        // the backfill opens its own transaction, so do NOT wrap here.
         apply_v8(conn)?;
         set_meta(conn, "schema_version", "8")?;
     }
@@ -148,14 +148,14 @@ fn apply_v1(conn: &Connection) -> SqlResult<()> {
 /// `project_name` via `crate::ingest::derive_project_name`.
 fn apply_v2(conn: &Connection) -> SqlResult<()> {
     // v8 re-runs the backfill with the real Paseo index.
-    backfill_project_names(conn, &crate::ingest::PaseoIndex::empty())
+    backfill_project_names(conn, &crate::ingest::WorktreeIndex::empty())
 }
 
 /// Migration v3 — re-run the `project_name` backfill to pick up an updated
 /// worktree rule.
 fn apply_v3(conn: &Connection) -> SqlResult<()> {
     // v8 re-runs the backfill with the real Paseo index.
-    backfill_project_names(conn, &crate::ingest::PaseoIndex::empty())
+    backfill_project_names(conn, &crate::ingest::WorktreeIndex::empty())
 }
 
 /// Migration v4 — re-run the backfill again after correcting the derivation
@@ -165,7 +165,7 @@ fn apply_v3(conn: &Connection) -> SqlResult<()> {
 /// Conductor projects into `"unknown"`.
 fn apply_v4(conn: &Connection) -> SqlResult<()> {
     // v8 re-runs the backfill with the real Paseo index.
-    backfill_project_names(conn, &crate::ingest::PaseoIndex::empty())
+    backfill_project_names(conn, &crate::ingest::WorktreeIndex::empty())
 }
 
 /// Migration v5 — create `project_groups` and `project_group_members` tables
@@ -210,27 +210,48 @@ fn apply_v7(conn: &Connection) -> SqlResult<()> {
     recompute_costs(conn)
 }
 
-/// Migration v8 — re-attribute rows from Paseo worktrees (previously all
-/// `unknown`) to their main repo, using `~/.paseo/projects/workspaces.json`,
-/// then the worktree's `.git` file, then the worktree slug.
-///
-/// **Explicit exception to the D19 contract**: `project_group_members` is NOT
-/// remapped, because the source name is `unknown` (a 1:N mapping that cannot
-/// be represented) and `unknown` still exists for `.claude/worktrees` rows.
+/// Migration v8 — re-attribute worktree sessions to their main repo's
+/// two-part name: Paseo worktrees (previously `unknown`) via
+/// `~/.paseo/projects/workspaces.json`, and Conductor workspaces (previously
+/// `<repo>`) via Conductor's `conductor.db`, then `.git`, then unique
+/// known-root basename. Remaps `project_group_members` for one-to-one renames
+/// (D19); `unknown` → N repos (Paseo) is 1:N and is intentionally not remapped.
 fn apply_v8(conn: &Connection) -> SqlResult<()> {
-    let paseo = crate::ingest::PaseoIndex::load_default();
-    backfill_project_names(conn, &paseo)
+    if count_events(conn)? == 0 {
+        // Fresh DB / tests: nothing to re-derive, don't read the real home.
+        return Ok(());
+    }
+    let idx = crate::ingest::WorktreeIndex::load_default();
+    backfill_project_names_and_remap_groups(conn, &idx)
+}
+
+/// Re-derive project_name for every row (no group remap). Used by v2–v4, which
+/// run before project_group_members exists (v5).
+fn backfill_project_names(conn: &Connection, idx: &crate::ingest::WorktreeIndex) -> SqlResult<()> {
+    backfill_inner(conn, idx, false)
+}
+
+/// Re-derive project_name and remap project_group_members one-to-one renames
+/// in the same transaction (D19).
+fn backfill_project_names_and_remap_groups(
+    conn: &Connection,
+    idx: &crate::ingest::WorktreeIndex,
+) -> SqlResult<()> {
+    backfill_inner(conn, idx, true)
 }
 
 /// Recompute `project_name` for every row from its stored `project_path`,
 /// updating in place within a single transaction (atomic). Idempotent: running
 /// on already-correct data is a no-op. Only rows whose name changes are written.
 ///
-/// **D19 contract**: any future re-derivation that changes the `project_name`
-/// rule MUST also remap `project_group_members.project_name` with the same
-/// old→new mapping, or group memberships will silently fall through to "otros".
-/// (v8 is a documented exception; see `apply_v8`.)
-fn backfill_project_names(conn: &Connection, paseo: &crate::ingest::PaseoIndex) -> SqlResult<()> {
+/// **D19 contract**: any future re-derivation that changes the rule MUST call
+/// `backfill_project_names_and_remap_groups`, or group memberships will
+/// silently fall through to "otros".
+fn backfill_inner(
+    conn: &Connection,
+    idx: &crate::ingest::WorktreeIndex,
+    remap_groups: bool,
+) -> SqlResult<()> {
     let mut stmt =
         conn.prepare("SELECT dedup_key, project_path, project_name FROM usage_events")?;
     let rows: Vec<(String, String, String)> = stmt
@@ -245,6 +266,7 @@ fn backfill_project_names(conn: &Connection, paseo: &crate::ingest::PaseoIndex) 
     drop(stmt);
 
     let mut cache: HashMap<String, String> = HashMap::new();
+    let mut transitions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let tx = conn.unchecked_transaction()?;
     {
         let mut upd =
@@ -252,15 +274,67 @@ fn backfill_project_names(conn: &Connection, paseo: &crate::ingest::PaseoIndex) 
         for (dedup_key, project_path, current_name) in rows {
             let new_name = cache
                 .entry(project_path.clone())
-                .or_insert_with(|| crate::ingest::derive_project_name(Some(&project_path), paseo))
+                .or_insert_with(|| crate::ingest::derive_project_name(Some(&project_path), idx))
                 .clone();
             if new_name != current_name {
                 upd.execute(params![new_name, dedup_key])?;
+                if remap_groups {
+                    transitions
+                        .entry(current_name)
+                        .or_default()
+                        .insert(new_name);
+                }
             }
         }
     }
+    if remap_groups {
+        remap_group_members(&tx, &transitions)?;
+    }
     tx.commit()?;
 
+    Ok(())
+}
+
+/// D19: for every old name whose rows ALL moved to exactly one new name
+/// (one-to-one), carry its group membership over. Rules:
+/// - skip `unknown` and any old name with >1 target (1:N not representable),
+/// - if the new name has no membership: INSERT (new, old_group),
+///   else keep the new name's existing membership (explicit choice wins),
+/// - delete the old membership only if no usage_events row still uses the old name.
+fn remap_group_members(
+    tx: &Connection,
+    transitions: &BTreeMap<String, BTreeSet<String>>,
+) -> SqlResult<()> {
+    for (old, targets) in transitions {
+        if old == "unknown" || targets.len() != 1 {
+            continue;
+        }
+        let new = targets.iter().next().expect("len == 1");
+        let gid: Option<i64> = tx
+            .query_row(
+                "SELECT group_id FROM project_group_members WHERE project_name = ?1",
+                params![old],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(gid) = gid else { continue };
+        tx.execute(
+            "INSERT INTO project_group_members (project_name, group_id) VALUES (?1, ?2)
+             ON CONFLICT(project_name) DO NOTHING",
+            params![new, gid],
+        )?;
+        let still_used: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM usage_events WHERE project_name = ?1)",
+            params![old],
+            |r| r.get(0),
+        )?;
+        if !still_used {
+            tx.execute(
+                "DELETE FROM project_group_members WHERE project_name = ?1",
+                params![old],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -602,6 +676,7 @@ mod tests {
     /// project_path is a Conductor workspace path. After running apply_v2 the
     /// project_name must be the repo component only; project_path must be
     /// unchanged. Running the migration a second time must not change anything.
+    // Historical step; v8 later resolves to the two-part name.
     #[test]
     fn test_v2_backfill_corrects_conductor_project_names() {
         // Open a fresh in-memory DB (goes through the full migration to v2).
@@ -1117,17 +1192,67 @@ mod tests {
         );
     }
 
+    fn v8_idx() -> crate::ingest::WorktreeIndex {
+        use crate::ingest::{ConductorIndex, PaseoIndex, WorktreeIndex};
+        WorktreeIndex::new(
+            PaseoIndex::from_json_str(V8_PASEO_JSON),
+            ConductorIndex::from_entries(
+                vec![(
+                    "/Users/x/conductor/workspaces/tub2/chengdu-v4".to_owned(),
+                    "/Users/x/dev/inventures/tub2".to_owned(),
+                )],
+                vec![
+                    ("tub2".to_owned(), "/Users/x/dev/inventures/tub2".to_owned()),
+                    ("backend".to_owned(), "/Users/x/dev/meki/backend".to_owned()),
+                ],
+            ),
+        )
+    }
+
+    fn v8_members(conn: &Connection) -> Vec<(String, i64)> {
+        conn.prepare(
+            "SELECT project_name, group_id FROM project_group_members ORDER BY project_name",
+        )
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<SqlResult<_>>()
+        .unwrap()
+    }
+
+    fn v8_groups(conn: &Connection, n: i64) {
+        for i in 1..=n {
+            conn.execute(
+                "INSERT INTO project_groups (name, created_at) VALUES (?1, '2026-10-20T00:00:00Z')",
+                params![format!("g{i}")],
+            )
+            .unwrap();
+        }
+    }
+
+    fn v8_member(conn: &Connection, name: &str, gid: i64) {
+        conn.execute(
+            "INSERT INTO project_group_members (project_name, group_id) VALUES (?1, ?2)",
+            params![name, gid],
+        )
+        .unwrap();
+    }
+
     #[test]
-    fn test_v8_backfill_reattributes_paseo_unknown_rows() {
+    fn test_v8_backfill_reattributes_paseo_and_conductor_rows() {
         let conn = test_conn();
         v8_seed_all(&conn);
-        let idx = crate::ingest::PaseoIndex::from_json_str(V8_PASEO_JSON);
-        backfill_project_names(&conn, &idx).unwrap();
+        backfill_project_names_and_remap_groups(&conn, &v8_idx()).unwrap();
         let rows = v8_snapshot(&conn);
         let names: Vec<&str> = rows.iter().map(|r| r.2.as_str()).collect();
         assert_eq!(
             names,
-            ["freelance/tokenwatch", "meki/backend", "unknown", "tub2"]
+            [
+                "freelance/tokenwatch",
+                "meki/backend",
+                "unknown",
+                "inventures/tub2"
+            ]
         );
         assert_eq!(
             rows[0].1,
@@ -1145,38 +1270,131 @@ mod tests {
     fn test_v8_backfill_idempotent() {
         let conn = test_conn();
         v8_seed_all(&conn);
-        let idx = crate::ingest::PaseoIndex::from_json_str(V8_PASEO_JSON);
-        backfill_project_names(&conn, &idx).unwrap();
+        v8_groups(&conn, 1);
+        v8_member(&conn, "tub2", 1);
+        let idx = v8_idx();
+        backfill_project_names_and_remap_groups(&conn, &idx).unwrap();
         let before = v8_snapshot(&conn);
+        let members_before = v8_members(&conn);
         let total_before = conn.total_changes();
-        backfill_project_names(&conn, &idx).unwrap();
+        backfill_project_names_and_remap_groups(&conn, &idx).unwrap();
         assert_eq!(conn.total_changes(), total_before);
         assert_eq!(before, v8_snapshot(&conn));
+        assert_eq!(members_before, v8_members(&conn));
     }
 
     #[test]
-    fn test_v8_backfill_does_not_touch_group_members() {
+    fn test_v8_does_not_remap_unknown_members() {
         let conn = test_conn();
         v8_seed_all(&conn);
-        conn.execute(
-            "INSERT INTO project_groups (name, created_at) VALUES ('g', '2026-10-20T00:00:00Z')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO project_group_members (project_name, group_id) VALUES ('unknown', 1)",
-            [],
-        )
-        .unwrap();
-        let idx = crate::ingest::PaseoIndex::from_json_str(V8_PASEO_JSON);
-        backfill_project_names(&conn, &idx).unwrap();
-        let members: Vec<(String, i64)> = conn
-            .prepare("SELECT project_name, group_id FROM project_group_members")
-            .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .unwrap()
-            .collect::<SqlResult<_>>()
+        v8_groups(&conn, 1);
+        v8_member(&conn, "unknown", 1);
+        backfill_project_names_and_remap_groups(&conn, &v8_idx()).unwrap();
+        assert_eq!(v8_members(&conn), vec![("unknown".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn test_v8_remaps_conductor_member_one_to_one() {
+        let conn = test_conn();
+        v8_seed(
+            &conn,
+            "d",
+            "/Users/x/conductor/workspaces/tub2/chengdu-v4",
+            "tub2",
+        );
+        v8_groups(&conn, 1);
+        v8_member(&conn, "tub2", 1);
+        backfill_project_names_and_remap_groups(&conn, &v8_idx()).unwrap();
+        assert_eq!(v8_members(&conn), vec![("inventures/tub2".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn test_v8_remap_keeps_existing_target_membership() {
+        let conn = test_conn();
+        v8_seed(
+            &conn,
+            "a",
+            "/Users/x/conductor/workspaces/backend/madrid",
+            "backend",
+        );
+        v8_seed(&conn, "b", "/Users/x/dev/meki/backend", "meki/backend");
+        v8_groups(&conn, 2);
+        v8_member(&conn, "backend", 1);
+        v8_member(&conn, "meki/backend", 2);
+        backfill_project_names_and_remap_groups(&conn, &v8_idx()).unwrap();
+        assert_eq!(v8_members(&conn), vec![("meki/backend".to_owned(), 2)]);
+    }
+
+    #[test]
+    fn test_v8_remap_keeps_old_member_while_name_still_used() {
+        let conn = test_conn();
+        v8_seed(
+            &conn,
+            "a",
+            "/Users/x/conductor/workspaces/tub2/chengdu-v4",
+            "tub2",
+        );
+        v8_seed(&conn, "b", "/tub2", "tub2");
+        v8_groups(&conn, 1);
+        v8_member(&conn, "tub2", 1);
+        backfill_project_names_and_remap_groups(&conn, &v8_idx()).unwrap();
+        assert_eq!(
+            v8_members(&conn),
+            vec![("inventures/tub2".to_owned(), 1), ("tub2".to_owned(), 1)]
+        );
+    }
+
+    #[test]
+    fn test_v8_remap_skips_one_to_many() {
+        let conn = test_conn();
+        v8_seed(&conn, "a", "/a/b/c", "stale");
+        v8_seed(&conn, "b", "/d/e/f", "stale");
+        v8_groups(&conn, 1);
+        v8_member(&conn, "stale", 1);
+        backfill_project_names_and_remap_groups(&conn, &v8_idx()).unwrap();
+        let names: Vec<String> = v8_snapshot(&conn).into_iter().map(|r| r.2).collect();
+        assert_eq!(names, ["b/c", "e/f"]);
+        assert_eq!(v8_members(&conn), vec![("stale".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn test_v8_remap_idempotent_members() {
+        let conn = test_conn();
+        v8_seed(
+            &conn,
+            "d",
+            "/Users/x/conductor/workspaces/tub2/chengdu-v4",
+            "tub2",
+        );
+        v8_groups(&conn, 1);
+        v8_member(&conn, "tub2", 1);
+        let idx = v8_idx();
+        backfill_project_names_and_remap_groups(&conn, &idx).unwrap();
+        let members = v8_members(&conn);
+        let total = conn.total_changes();
+        backfill_project_names_and_remap_groups(&conn, &idx).unwrap();
+        assert_eq!(v8_members(&conn), members);
+        assert_eq!(conn.total_changes(), total);
+    }
+
+    #[test]
+    fn test_v2_backfill_does_not_touch_group_members() {
+        let conn = test_conn();
+        v8_groups(&conn, 1);
+        v8_member(&conn, "stale", 1);
+        v8_seed(&conn, "a", "/Users/x/dev/inventures/tub2", "stale");
+        apply_v2(&conn).unwrap();
+        let name: String = conn
+            .query_row("SELECT project_name FROM usage_events", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(members, vec![("unknown".to_owned(), 1)]);
+        assert_eq!(name, "inventures/tub2");
+        assert_eq!(v8_members(&conn), vec![("stale".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn test_v8_on_empty_db_is_noop() {
+        let conn = test_conn();
+        apply_v8(&conn).unwrap();
+        assert_eq!(count_events(&conn).unwrap(), 0);
     }
 }
