@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-11
+
+### Fixed
+- attribute Paseo and Conductor sessions to their main repo (#45)
+
+
+
 ## [0.3.2] - 2026-11-11
 
 _No user-facing changes._
