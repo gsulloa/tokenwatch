@@ -29,6 +29,18 @@ export type LimitsStatus =
         | "parse";
     };
 
+/** Free limit-reset grant available to claim in claude.ai (summary from backend). */
+export interface ResetGrantSummary {
+  id: string;
+  label: string;
+  resetsLeft: number;
+  /** ISO 8601 or null when the grant has no expiry. */
+  endsAt: string | null;
+  /** "session" | "weekly" | "full" or other future values. */
+  type: string | null;
+  usableNow: boolean;
+}
+
 /**
  * Snapshot of Claude usage limits returned by `query_limits`.
  * Also the payload of the `limits-updated` Tauri event.
@@ -39,6 +51,7 @@ export interface LimitsSnapshot {
   weeklyByModel: LimitsWindow[];
   fetchedAt: string;
   status: LimitsStatus;
+  resetGrants: ResetGrantSummary[];
 }
 
 /**

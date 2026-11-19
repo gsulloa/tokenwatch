@@ -53,6 +53,15 @@ function normalizeWindow(raw: RawWindow): LimitsWindow {
   };
 }
 
+interface RawResetGrant {
+  id?: string;
+  label?: string;
+  resetsLeft?: number;
+  endsAt?: string | null;
+  type?: string | null;
+  usableNow?: boolean;
+}
+
 /**
  * Raw snapshot shape from backend — mirrors Rust serde output.
  * weekly_by_model may arrive as weeklyByModel depending on serde rename.
@@ -65,6 +74,8 @@ interface RawSnapshot {
   fetched_at?: string;
   fetchedAt?: string;
   status?: { kind: string; reason?: string };
+  resetGrants?: RawResetGrant[] | null;
+  reset_grants?: RawResetGrant[] | null;
 }
 
 /**
@@ -96,6 +107,16 @@ function normalizeSnapshot(raw: RawSnapshot): LimitsSnapshot {
     weeklyByModel: weeklyByModelRaw.map(normalizeWindow),
     fetchedAt: raw.fetchedAt ?? raw.fetched_at ?? "",
     status,
+    resetGrants: (raw.resetGrants ?? raw.reset_grants ?? [])
+      .filter((g) => typeof g.id === "string" && g.id !== "")
+      .map((g) => ({
+        id: g.id as string,
+        label: g.label ?? "Reinicio de límites",
+        resetsLeft: g.resetsLeft ?? 0,
+        endsAt: g.endsAt ?? null,
+        type: g.type ?? null,
+        usableNow: g.usableNow ?? false,
+      })),
   };
 }
 
