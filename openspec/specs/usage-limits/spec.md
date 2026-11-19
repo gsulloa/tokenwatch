@@ -23,7 +23,7 @@ El sistema SHALL obtener el token OAuth de Claude leyendo el generic-password de
 - **THEN** el sistema devuelve estado no disponible con motivo `expired` y NO intenta refrescar el token
 
 ### Requirement: Consulta de utilización de límites de Claude
-El sistema SHALL consultar `GET https://api.anthropic.com/api/oauth/usage` con los headers `Authorization: Bearer <token>` y `anthropic-beta: oauth-2025-04-20`, y exponer un comando `query_limits` que devuelva la utilización de la ventana de **sesión de 5h**, de la **semana** (total) y de los **límites semanales por modelo**.
+El sistema SHALL consultar `GET https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1` con los headers `Authorization: Bearer <token>`, `anthropic-beta: oauth-2025-04-20` y `User-Agent: claude-cli/<versión> (external, cli)`, donde `<versión>` es la mayor versión `X.Y.Z` entre los nombres de entrada de `~/.local/share/claude/versions/` (o `2.1.328` si no hay ninguna), calculada una vez por ejecución de la app, y exponer un comando `query_limits` que devuelva la utilización de la ventana de **sesión de 5h**, de la **semana** (total) y de los **límites semanales por modelo**.
 
 El sistema SHALL derivar cada ventana de forma independiente. Primero la busca en el array normalizado `limits[]` (`kind: session | weekly_all | weekly_scoped`, `percent`, `resets_at`, `scope.model`). Si la ventana no aparece ahí, la toma de los campos top-level:
 - `five_hour` para la sesión;
@@ -131,3 +131,36 @@ El sistema SHALL ofrecer un ajuste persistente para silenciar todas las notifica
 - **WHEN** el usuario silencia las alertas y reinicia la app
 - **THEN** el ajuste sigue activo tras el reinicio
 
+### Requirement: Reinicios gratuitos de límites disponibles
+El sistema SHALL leer el bloque `cedar_ember` de la misma respuesta de uso (sin peticiones adicionales) y exponer en el snapshot de límites (`resetGrants`) la lista de reinicios disponibles, cada uno con `id`, `label`, `resetsLeft`, `endsAt`, `type` y `usableNow`, ordenada por `endsAt` ascendente (sin vencimiento al final). Un reinicio MUST considerarse disponible solo si el bloque es elegible (`eligible: true`), el reinicio tiene `id`, no está pausado, `resets_left > 0` y su `ends_at` no ha pasado. Si el bloque falta, es `null`, tiene un tipo inesperado o no es elegible, la lista MUST quedar vacía sin error y sin afectar a las demás ventanas. El sistema MUST NOT reclamar reinicios.
+
+#### Scenario: Bloque ausente o no elegible
+- **WHEN** la respuesta no trae `cedar_ember`, lo trae en `null` o con `eligible: false`
+- **THEN** `resetGrants` está vacío y sesión y semana se devuelven normalmente
+
+#### Scenario: Reinicios mezclados
+- **WHEN** `cedar_ember` es elegible y trae un reinicio disponible, uno pausado, uno con `resets_left: 0` y uno vencido
+- **THEN** `resetGrants` contiene solo el disponible
+
+#### Scenario: Bloque mal formado
+- **WHEN** `cedar_ember` tiene un tipo inesperado o un reinicio mal formado
+- **THEN** se ignora lo mal formado y el resto de la respuesta se parsea sin error
+
+### Requirement: Notificaciones de reinicios gratuitos
+El sistema SHALL emitir una notificación de macOS (título "TokenWatch") por cada reinicio disponible que no se haya notificado antes, incluidos los existentes la primera vez que se ejecuta, con el texto "Reinicio de límites disponible: <label> · vence el <fecha>. Reclámalo en claude.ai → Configuración → Uso". El sistema SHALL emitir además, una sola vez por reinicio, la notificación "Reinicio de límites por vencer: <label> · vence el <fecha>. Reclámalo en claude.ai → Configuración → Uso" cuando falten 3 días o menos para su vencimiento; si un reinicio aparece por primera vez ya dentro de ese plazo, MUST enviarse una sola notificación. Los reinicios notificados MUST persistir entre reinicios de la app. Con "silenciar alertas" activo no se emite ninguna de estas notificaciones y los reinicios se dan por notificados.
+
+#### Scenario: Primer arranque con reinicios sin usar
+- **WHEN** la app consulta por primera vez y hay un reinicio disponible
+- **THEN** emite la notificación de reinicio disponible
+
+#### Scenario: Sin repetición
+- **WHEN** un reinicio ya notificado sigue disponible en consultas posteriores o tras reiniciar la app
+- **THEN** no se emite una nueva notificación de disponible
+
+#### Scenario: Por vencer
+- **WHEN** un reinicio ya notificado pasa a vencer en 3 días o menos
+- **THEN** se emite una sola notificación de reinicio por vencer
+
+#### Scenario: Alertas silenciadas
+- **WHEN** las alertas están silenciadas y aparece un reinicio disponible
+- **THEN** no se emite notificación
