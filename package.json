@@ -14,6 +14,8 @@
     "format": "pnpm --filter tokenwatch format",
     "test": "pnpm --filter tokenwatch test",
     "test:run": "pnpm --filter tokenwatch test:run",
+    "check": "pnpm typecheck && pnpm lint && pnpm test:run && pnpm check:rust",
+    "check:rust": "cd packages/app/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test",
     "infra": "pnpm --filter infra",
     "infra:build": "pnpm --filter infra build",
     "infra:synth": "pnpm --filter infra cdk synth"
