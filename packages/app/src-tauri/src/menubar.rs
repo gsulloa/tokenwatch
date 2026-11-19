@@ -189,6 +189,7 @@ mod tests {
             weekly_by_model: vec![],
             fetched_at: "2026-07-06T10:00:00Z".to_owned(),
             status: LimitsStatus::Ok,
+            reset_grants: vec![],
         }
     }
 
@@ -261,6 +262,7 @@ mod tests {
             status: LimitsStatus::Unavailable {
                 reason: "expired".to_owned(),
             },
+            reset_grants: vec![],
         };
         assert_eq!(
             format_badge(BadgeMode::Week, Some(&s)),

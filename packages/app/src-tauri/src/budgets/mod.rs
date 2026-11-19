@@ -623,6 +623,7 @@ mod tests {
             weekly_by_model: vec![],
             fetched_at: "2026-07-05T10:00:00Z".to_owned(),
             status: LimitsStatus::Ok,
+            reset_grants: vec![],
         };
         AppState {
             conn: std::sync::Mutex::new(conn),
@@ -1024,6 +1025,7 @@ mod tests {
             weekly_by_model: vec![],
             fetched_at: "2026-07-05T10:00:00Z".to_owned(),
             status: crate::limits::LimitsStatus::Ok,
+            reset_grants: vec![],
         };
         let state_conn = test_conn();
         let state = AppState {
