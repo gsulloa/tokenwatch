@@ -166,3 +166,13 @@ Para los límites, mientras la nueva consulta está en curso, el popover MUST se
 - **WHEN** transcurre el intervalo de polling en segundo plano
 - **THEN** el ciclo de polling continúa obteniendo el snapshot, evaluando umbrales y disparando notificaciones, independientemente de si el popover se abrió o no
 
+### Requirement: Fila de reinicios gratuitos disponibles
+Cuando el snapshot de límites esté disponible e incluya reinicios disponibles, la sección de límites SHALL mostrar una fila compacta "N reinicios disponibles · vence el <fecha>" (singular "1 reinicio disponible"), donde N es la suma de los reinicios restantes y la fecha (día y mes abreviado, hora local) corresponde al reinicio que vence antes. Si ese reinicio no tiene vencimiento, MUST omitirse "· vence el <fecha>". Si no hay reinicios disponibles o los límites no están disponibles, la fila MUST NOT mostrarse.
+
+#### Scenario: Reinicios disponibles
+- **WHEN** el snapshot incluye dos reinicios disponibles que vencen el 30 nov y el 15 dic
+- **THEN** la sección de límites muestra "2 reinicios disponibles · vence el 30 nov"
+
+#### Scenario: Sin reinicios
+- **WHEN** el snapshot no incluye reinicios disponibles
+- **THEN** la fila no se muestra

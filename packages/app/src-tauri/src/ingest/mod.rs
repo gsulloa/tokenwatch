@@ -612,7 +612,7 @@ pub fn claude_projects_dir() -> Option<std::path::PathBuf> {
     Some(home_dir()?.join(".claude").join("projects"))
 }
 
-fn home_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn home_dir() -> Option<std::path::PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(std::path::PathBuf::from)

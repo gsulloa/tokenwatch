@@ -1,7 +1,8 @@
 //! Claude usage-limits capability.
 //!
 //! Reads the OAuth token from the macOS Keychain, queries the Anthropic
-//! `/api/oauth/usage` endpoint, parses the response into a [`LimitsSnapshot`],
+//! `/api/oauth/usage` endpoint (also requesting the `cedar_ember` free-reset
+//! block, which needs a Claude Code CLI `User-Agent`), parses the response into a [`LimitsSnapshot`],
 //! and manages threshold-based macOS notifications per window.
 //!
 //! Exposes three Tauri commands to the frontend:
@@ -16,6 +17,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::{db, usage::AppState};
+
+mod cli_version;
+pub mod reset_grants;
+pub use reset_grants::ResetGrant;
+
+const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1";
 
 // ---------------------------------------------------------------------------
 // Public event name
@@ -75,6 +82,9 @@ pub struct LimitsSnapshot {
     pub weekly_by_model: Vec<Window>,
     pub fetched_at: String,
     pub status: LimitsStatus,
+    /// Available free limit-reset grants (empty when not eligible / absent).
+    #[serde(default)]
+    pub reset_grants: Vec<ResetGrant>,
 }
 
 impl LimitsSnapshot {
@@ -87,6 +97,7 @@ impl LimitsSnapshot {
             status: LimitsStatus::Unavailable {
                 reason: reason.to_owned(),
             },
+            reset_grants: vec![],
         }
     }
 }
@@ -134,6 +145,7 @@ struct ApiResponse {
     seven_day: Option<ApiTopLevel>,
     seven_day_opus: Option<ApiTopLevel>,
     seven_day_sonnet: Option<ApiTopLevel>,
+    cedar_ember: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,9 +278,13 @@ async fn fetch_usage(token: &str) -> Result<LimitsSnapshot, String> {
         }
 
         let resp = match client
-            .get("https://api.anthropic.com/api/oauth/usage")
+            .get(USAGE_URL)
             .header("Authorization", format!("Bearer {token}"))
             .header("anthropic-beta", "oauth-2025-04-20")
+            .header(
+                reqwest::header::USER_AGENT,
+                cli_version::claude_cli_user_agent(),
+            )
             .send()
             .await
         {
@@ -365,7 +381,7 @@ fn reconcile_with_cache(fresh: LimitsSnapshot, state: &AppState) -> LimitsSnapsh
     result
 }
 
-fn parse_api_response(api: ApiResponse, now: DateTime<Utc>) -> Result<LimitsSnapshot, String> {
+fn parse_api_response(mut api: ApiResponse, now: DateTime<Utc>) -> Result<LimitsSnapshot, String> {
     let mut session: Option<Window> = None;
     let mut weekly: Option<Window> = None;
     let mut scoped: Vec<Window> = Vec::new();
@@ -453,12 +469,15 @@ fn parse_api_response(api: ApiResponse, now: DateTime<Utc>) -> Result<LimitsSnap
         );
     }
 
+    let reset_grants = reset_grants::available_grants(api.cedar_ember.take(), now);
+
     Ok(LimitsSnapshot {
         session,
         weekly,
         weekly_by_model,
         fetched_at: now.to_rfc3339(),
         status: LimitsStatus::Ok,
+        reset_grants,
     })
 }
 
@@ -612,17 +631,22 @@ async fn run_limits_and_emit(app_handle: &AppHandle) {
     if matches!(snapshot.status, LimitsStatus::Ok) {
         let session_resets_at = snapshot.session.as_ref().map(|w| w.resets_at.clone());
 
-        let alert_results: Option<(bool, Vec<AlertToFire>, Vec<String>)> =
-            state.conn.lock().ok().map(|conn| {
-                let muted = alerts_muted(&conn);
-                let global_alerts = evaluate_alerts(&conn, &snapshot);
-                // Compute group budgets and evaluate group alerts under the same lock.
-                let group_notifications =
-                    crate::budgets::run_group_alerts(&conn, &state, session_resets_at.as_deref());
-                (muted, global_alerts, group_notifications)
-            });
+        let alert_results = state.conn.lock().ok().map(|conn| {
+            let muted = alerts_muted(&conn);
+            let global_alerts = evaluate_alerts(&conn, &snapshot);
+            // Compute group budgets and evaluate group alerts under the same lock.
+            let group_notifications =
+                crate::budgets::run_group_alerts(&conn, &state, session_resets_at.as_deref());
+            let grant_bodies = reset_grants::evaluate_grant_alerts(
+                &conn,
+                &snapshot.reset_grants,
+                Utc::now(),
+                muted,
+            );
+            (muted, global_alerts, group_notifications, grant_bodies)
+        });
 
-        if let Some((muted, global_alerts, group_notifications)) = alert_results {
+        if let Some((muted, global_alerts, group_notifications, grant_bodies)) = alert_results {
             if !muted {
                 if !global_alerts.is_empty() {
                     send_notifications(app_handle, &global_alerts);
@@ -637,6 +661,18 @@ async fn run_limits_and_emit(app_handle: &AppHandle) {
                     {
                         tracing::warn!("failed to send group notification: {e}");
                     }
+                }
+            }
+            // Bodies are already empty when muted.
+            for text in grant_bodies {
+                if let Err(e) = app_handle
+                    .notification()
+                    .builder()
+                    .title("TokenWatch")
+                    .body(&text)
+                    .show()
+                {
+                    tracing::warn!("failed to send reset-grant notification: {e}");
                 }
             }
         }
@@ -696,6 +732,7 @@ mod tests {
             weekly_by_model: vec![],
             fetched_at: Utc::now().to_rfc3339(),
             status: LimitsStatus::Ok,
+            reset_grants: vec![],
         }
     }
 
@@ -959,5 +996,53 @@ mod tests {
             .map(|w| w.label.clone().unwrap())
             .collect();
         assert_eq!(labels, vec!["Opus", "Sonnet"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // cedar_ember / reset grants
+    // -----------------------------------------------------------------------
+
+    const LIMITS_JSON: &str = r#""limits":[{"kind":"session","percent":10.0,"resets_at":"2026-11-07T15:00:00Z"},{"kind":"weekly_all","percent":20.0,"resets_at":"2026-11-10T15:00:00Z"}]"#;
+
+    #[test]
+    fn parse_without_cedar_ember_has_no_grants() {
+        let s = parse(&format!("{{{LIMITS_JSON}}}"));
+        assert!(s.reset_grants.is_empty());
+        assert!(s.session.is_some());
+        assert!(s.weekly.is_some());
+    }
+
+    #[test]
+    fn parse_with_eligible_cedar_ember_exposes_grants() {
+        let s = parse(&format!(
+            r#"{{{LIMITS_JSON},"cedar_ember":{{"eligible":true,"grants":[{{"id":"g1","resets_left":1,"ends_at":"2026-11-30T12:00:00Z","type":"weekly","usable_now":true}}]}}}}"#
+        ));
+        assert_eq!(s.reset_grants.len(), 1);
+        assert!(s.session.is_some());
+        assert!(s.weekly.is_some());
+    }
+
+    #[test]
+    fn parse_with_malformed_cedar_ember_keeps_limits() {
+        let s = parse(&format!(r#"{{{LIMITS_JSON},"cedar_ember":42}}"#));
+        assert!(s.reset_grants.is_empty());
+        assert!(s.session.is_some());
+        assert!(s.weekly.is_some());
+    }
+
+    #[test]
+    fn snapshot_serializes_reset_grants_camel_case() {
+        let s = parse(&format!(
+            r#"{{{LIMITS_JSON},"cedar_ember":{{"eligible":true,"grants":[{{"id":"g1","resets_left":1,"ends_at":"2026-11-30T12:00:00Z","type":"weekly","usable_now":true}}]}}}}"#
+        ));
+        let v = serde_json::to_value(&s).unwrap();
+        let g = &v["resetGrants"][0];
+        assert_eq!(g["resetsLeft"], 1);
+        assert_eq!(g["endsAt"], "2026-11-30T12:00:00Z");
+        assert_eq!(g["type"], "weekly");
+        assert_eq!(g["usableNow"], true);
+        let text = v.to_string().to_lowercase();
+        assert!(!text.contains("token"));
+        assert!(!text.contains("authorization"));
     }
 }

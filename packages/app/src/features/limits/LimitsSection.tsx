@@ -1,4 +1,5 @@
 import { LimitGauge } from "./LimitGauge";
+import { ResetGrantsRow } from "./ResetGrantsRow";
 import type { LimitsSnapshot } from "./types";
 
 interface UnavailableMessageProps {
@@ -182,6 +183,8 @@ export function LimitsSection({ snapshot, loading = false }: LimitsSectionProps)
               </div>
             </div>
           )}
+
+          <ResetGrantsRow grants={snapshot.resetGrants} />
         </div>
       )}
     </section>
